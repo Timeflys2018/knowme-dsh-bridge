@@ -1,0 +1,21 @@
+# Example: mount @knowme/dsh-bridge alongside the official SDK jsonrpc-server
+# inside a dsh deployment. Copy the relevant row into your real cordis.yml.
+#
+# This runs the bridge IN the dsh process; the out-of-process host (KnowMe)
+# drives it over the same stdio JSON-RPC channel used by the official server.
+#
+# Order: the official jsonrpc-server owns the 5 base methods; this bridge owns
+# the `knowme/*` methods. They must not both be composed onto a stdout logger
+# (stdout is the protocol — diagnostics go to stderr).
+
+plugins:
+  # Official out-of-process SDK server (the 5 base methods + notifications).
+  '@deepseek-ai/dsh-sdk-jsonrpc-server': {}
+
+  # This bridge — adds knowme/selectModel, knowme/approval-respond,
+  # knowme/question-respond over the same stdio channel.
+  '@knowme/dsh-bridge': {}
+
+  # ... the rest of your dsh composition (agents, llm-deepseek, session
+  # persistence, approval, user-questions, etc.) provides the services this
+  # bridge reads via ctx.get(...). See src/contract.ts REQUIRED_SERVICES.
