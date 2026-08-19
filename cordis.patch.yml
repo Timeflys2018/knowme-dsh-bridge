@@ -1,0 +1,13 @@
+# @knowme/dsh-bridge bundle patch: insert the bridge as the SDK stdio entry
+# of a profile composed over dsh-base.
+#
+# dsh-base already mounts everything the bridge methods read (approval,
+# user-questions, credentials-local, llm-pi-ai dormant until a settings.yaml
+# route activates it) — so this layer adds exactly one row. Insert appends to
+# the composed tree, which places the bridge AFTER those services, satisfying
+# the bridge's apply-time soft-probe ordering. The bridge is the sole stdio
+# transport owner; dsh-base mounts no other stdio SDK server, so there is
+# nothing to disable.
+- insert:
+    - id: knowme-bridge
+      name: '@knowme/dsh-bridge'

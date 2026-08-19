@@ -74,6 +74,8 @@
     "vitest": "^2.0.0"
   },
   "dsh": {
-    "plugin": true
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   }
 }
