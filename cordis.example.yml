@@ -1,21 +1,42 @@
-# Example: mount @knowme/dsh-bridge alongside the official SDK jsonrpc-server
-# inside a dsh deployment. Copy the relevant row into your real cordis.yml.
+# Example: mount @knowme/dsh-bridge as the SDK entry of a dsh deployment.
+# Copy the relevant rows into your real cordis.yml.
 #
-# This runs the bridge IN the dsh process; the out-of-process host (KnowMe)
-# drives it over the same stdio JSON-RPC channel used by the official server.
+# SHAPE (single transport owner): the bridge REPLACES
+# @deepseek-ai/dsh-sdk-jsonrpc-server — it constructs the official
+# HarnessSdkJsonRpcServer itself over ONE stdio transport and routes by method
+# prefix (`knowme/*` → bridge; the official 5 methods → official server; the
+# official session.event / session.status / subagent.* notifications flow over
+# the same channel). Do NOT also mount the official server plugin: the stdio
+# JsonRpcLineTransport supports exactly one request handler, so two plugins
+# would double-read stdin and clobber each other.
 #
-# Order: the official jsonrpc-server owns the 5 base methods; this bridge owns
-# the `knowme/*` methods. They must not both be composed onto a stdout logger
-# (stdout is the protocol — diagnostics go to stderr).
+# ORDER: compose the services the bridge reads (approval, user-questions, llm)
+# BEFORE the bridge row — the bridge soft-probes them at apply() time. Stdout
+# is the protocol; diagnostics go to stderr (no stdout logger in this tree).
 
 plugins:
-  # Official out-of-process SDK server (the 5 base methods + notifications).
-  '@deepseek-ai/dsh-sdk-jsonrpc-server': {}
+  # --- services the bridge methods need (soft-probed; order before bridge) ---
 
-  # This bridge — adds knowme/selectModel, knowme/approval-respond,
-  # knowme/question-respond over the same stdio channel.
+  # llm adapter — required for knowme/selectModel (degrades to
+  # `llm-unavailable` errors when absent). Shipped default shown; any
+  # registered adapter works.
+  '@deepseek-ai/dsh-llm-deepseek': {}
+
+  # approval service — enables knowme/approval-respond (passively degraded:
+  # without it no approval ever parks, and approval-respond answers
+  # `approval-not-found`).
+  '@deepseek-ai/dsh-user-approval': {}
+
+  # user-questions service — enables knowme/question-respond (the bridge
+  # registers itself as THE provider; a second UI provider collides and
+  # degrades question methods with `user-questions-unavailable`).
+  '@deepseek-ai/dsh-user-questions': {}
+
+  # --- the SDK entry (single transport owner) ---
+
   '@knowme/dsh-bridge': {}
 
-  # ... the rest of your dsh composition (agents, llm-deepseek, session
-  # persistence, approval, user-questions, etc.) provides the services this
-  # bridge reads via ctx.get(...). See src/contract.ts REQUIRED_SERVICES.
+  # ... the rest of your dsh composition (agents/agent-loop, subprocess, bash,
+  # session persistence, fs, token-meter, compaction, ...) provides the
+  # `agents` service the bridge hard-injects. See
+  # examples/jsonrpc-agent/cordis.yml in the dsh repo for a complete baseline.

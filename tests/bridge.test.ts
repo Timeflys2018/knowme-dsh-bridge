@@ -1,30 +1,26 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import { createBridge, type BridgeContext } from '../src/bridge.js'
+import { createBridge } from '../src/bridge.js'
 import { BRIDGE_METHODS } from '../src/contract.js'
+import { fakeBridgeDeps } from './helpers.js'
 
-function fakeCtx(): BridgeContext {
-  return {
-    get: vi.fn(() => undefined),
-    on: vi.fn(() => () => undefined),
-  }
-}
-
-describe('knowme-dsh-bridge (scaffold)', () => {
+describe('knowme-dsh-bridge routing contract', () => {
   it('rejects unknown methods', async () => {
-    const bridge = createBridge(fakeCtx())
+    const bridge = createBridge(fakeBridgeDeps().deps)
     await expect(bridge.handleRequest('bogus/method', {})).rejects.toThrow(/unknown knowme-dsh-bridge method/)
+    await expect(bridge.handleRequest('knowme/bogus', {})).rejects.toThrow(
+      /unknown knowme-dsh-bridge method: knowme\/bogus/,
+    )
   })
 
-  // The three interaction-control methods are recognized (routed), but their
-  // bodies are gated on dsh stable — they throw a "not implemented (gated)"
-  // marker rather than "unknown method". This locks the routing contract now;
-  // the real forwarding behavior lands post-stable (TDD red -> green then).
-  it.each([BRIDGE_METHODS.selectModel, BRIDGE_METHODS.approvalRespond, BRIDGE_METHODS.questionRespond])(
-    'routes %s (gated: not yet implemented)',
-    async (method) => {
-      const bridge = createBridge(fakeCtx())
-      await expect(bridge.handleRequest(method, {})).rejects.toThrow(/not implemented \(gated on dsh stable\)/)
-    },
-  )
+  // Each bridge method is routed (not "unknown"); with unusable params the
+  // method-specific validation error proves dispatch reached the right body.
+  it.each([
+    [BRIDGE_METHODS.selectModel, /sessionId/],
+    [BRIDGE_METHODS.approvalRespond, /sessionId/],
+    [BRIDGE_METHODS.questionRespond, /sessionId/],
+  ])('routes %s to its own validation', async (method, pattern) => {
+    const bridge = createBridge(fakeBridgeDeps().deps)
+    await expect(bridge.handleRequest(method, {})).rejects.toThrow(pattern)
+  })
 })
