@@ -35,4 +35,4 @@
 
 - [x] 4.1 Review round 1 (4-slot parallel) COMPLETE — findings folded into artifacts; final integration pass over all findings confirmed mutually consistent; PEF summary: 0 blocker / latent callId-less swap + knowme-shadowing → contract pins + README / DUPLICATE_PROVIDER collision → degradation path. Implementation review pass still owed after Phase 1-3.
 - [x] 4.2 Full local gate: typecheck + test + verify:contract + spike T1-T3b all green in one run; update tasks/proposal if scope shifted.
-- [ ] 4.3 Commit (logical grouping), update zhiwo handoff pointer (bridge no longer "bodies gated"; note pinned rc.7 + owner gate-lift decision).
+- [x] 4.3 Commit (logical grouping), update zhiwo handoff pointer (bridge no longer "bodies gated"; note pinned rc.7 + owner gate-lift decision).
