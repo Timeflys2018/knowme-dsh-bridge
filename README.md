@@ -1,6 +1,6 @@
 # @knowme/dsh-bridge
 
-> **Status**: implemented against pinned dsh `0.1.0-rc.7` (see "Version discipline"). If a future dsh
+> **Status**: implemented against pinned dsh `0.1.0-rc.8` (see "Version discipline"). If a future dsh
 > stable release adds these methods to the official SDK surface, prefer the official methods and retire
 > this bridge.
 > **License**: MIT · **Visibility**: private (owner/developer use only)
@@ -72,7 +72,7 @@ neither can nor should rescue that shape (upstream documents the ask as turn-enc
 
 This plugin depends on dsh runtime packages as **peerDependencies** (not workspace). The rc line lives
 under npm's `next` dist-tag (`latest` still points at older rcs), so pin explicitly, e.g.
-`pnpm add @deepseek-ai/dsh-sdk-jsonrpc-server@0.1.0-rc.7 @knowme/dsh-bridge@<ver>`, then mount the
+`pnpm add @deepseek-ai/dsh-sdk-jsonrpc-server@0.1.0-rc.8 @knowme/dsh-bridge@<ver>`, then mount the
 bridge **in place of** `@deepseek-ai/dsh-sdk-jsonrpc-server` in your `cordis.yml` — the bridge owns the
 single stdio transport and routes the official 5 methods to the official server class itself. Compose
 `llm` / `@deepseek-ai/dsh-user-approval` / `@deepseek-ai/dsh-user-questions` **before** the bridge row
@@ -80,7 +80,7 @@ single stdio transport and routes the official 5 methods to the official server 
 
 ## Version discipline
 
-Implemented and verified against dsh `0.1.0-rc.7` (developer preview). `verify:contract` pins the
+Implemented and verified against dsh `0.1.0-rc.8` (developer preview). `verify:contract` pins the
 version line plus every runtime surface the bridge reads, so dsh churn fails CI before the bridge
 silently breaks. The standing rule from the design blueprint still applies: if an official stable SDK
 surface adds `selectModel`/approval-respond, prefer it and retire this bridge (B1 wins). See

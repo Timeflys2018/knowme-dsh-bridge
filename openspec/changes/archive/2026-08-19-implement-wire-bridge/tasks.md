@@ -5,7 +5,7 @@
 
 ## Phase 0 — contract & deps groundwork
 
-- [x] 0.1 Record the peerDep decision: npm availability of `@deepseek-ai/dsh-sdk-jsonrpc-server`, `@deepseek-ai/dsh-user-approval`, `@deepseek-ai/dsh-user-questions`, `@deepseek-ai/dsh-llm` on the `0.1.0-rc.7` line is review-CONFIRMED (dist-tag `next`; `latest` points at older rcs so installs must resolve the explicit range); keep existing `dsh-agent`/`dsh-session`/`dsh-sdk-protocol` peers. defines: final peerDep list. uses: design D5.3.
+- [x] 0.1 Record the peerDep decision: npm availability of `@deepseek-ai/dsh-sdk-jsonrpc-server`, `@deepseek-ai/dsh-user-approval`, `@deepseek-ai/dsh-user-questions`, `@deepseek-ai/dsh-llm` on the `0.1.0-rc.8` line is review-CONFIRMED (dist-tag `next`; `latest` points at older rcs so installs must resolve the explicit range); keep existing `dsh-agent`/`dsh-session`/`dsh-sdk-protocol` peers. defines: final peerDep list. uses: design D5.3.
 - [x] 0.2 Update `src/contract.ts`: fix `QuestionRespondParams.answers` to full answer items (`{id, selected, custom?}[]`); drop `'sessions'` from `REQUIRED_SERVICES`; add error-name constants (`session-not-found`, `model-unavailable`, `llm-unavailable`, `approval-not-found`, `question-not-found`, `user-questions-unavailable`). Hard check: `grep -c "'sessions'" src/contract.ts` → 0 after edit. defines: contract surface. uses: design D5.
 - [x] 0.3 Update `package.json` peerDeps per 0.1 (green immediately). Keep `tests/bridge.test.ts` routing assertions intact — the scaffold tests never locked the old answers shape (nothing to un-red); new shape assertions arrive red-first with Phase 1. defines: green deps + test baseline. uses: 0.1, 0.2.
 

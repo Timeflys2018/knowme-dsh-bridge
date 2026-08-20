@@ -1,6 +1,6 @@
 # Design — implement-wire-bridge
 
-> All dsh source anchors verified against local checkout `dsh-v0.1.0-rc.7` (git `99f6f02fec`), 2026-08-19.
+> All dsh source anchors verified against local checkout `dsh-v0.1.0-rc.8` (git `99f6f02fec`), 2026-08-19.
 
 ## Context
 
@@ -65,7 +65,7 @@ Recipe copied from the apiproxy provider (`packages/host/apiproxy/src/api-proxy.
 
 1. **QuestionRespondParams.answers**: scaffold had `readonly (readonly string[])[]` — lossy (no question-id mapping, no custom text; the real provider contract is keyed by id). Changed to full answer items. Scaffold tests that asserted the old shape are updated in the same task as the contract change.
 2. **REQUIRED_SERVICES**: drop `sessions` (lookup is `ctx.agents.get(sessionId)`; nothing reads a `sessions` service). Keep the list as documentation, but note the mechanisms differ: `llm` and `userQuestions` are actively soft-probed via `ctx.get` (their absence produces `llm-unavailable` / `user-questions-unavailable`); `approval` is **passively degraded** — the bridge registers a waterfall listener, never calls `ctx.get('approval')`, so an absent service simply means no asks ever park and `approval-respond` returns `approval-not-found`. No `approval-unavailable` error exists by design.
-3. **peerDeps add**: `@deepseek-ai/dsh-sdk-jsonrpc-server`, `@deepseek-ai/dsh-user-approval`, `@deepseek-ai/dsh-user-questions`, `@deepseek-ai/dsh-llm` (all `^0.1.0-rc.7` — npm availability of all four on the rc.7 line CONFIRMED by review, under the `next` dist-tag; `latest` still points at older rcs, so installs must resolve the explicit range). Existing peerDeps stay: `dsh-agent` (installModelSelection), `dsh-session`/`dsh-sdk-protocol` (transitive type surface; re-evaluate at 0.1 if redundant).
+3. **peerDeps add**: `@deepseek-ai/dsh-sdk-jsonrpc-server`, `@deepseek-ai/dsh-user-approval`, `@deepseek-ai/dsh-user-questions`, `@deepseek-ai/dsh-llm` (all `^0.1.0-rc.8` — npm availability of all four on the rc.7 line CONFIRMED by review, under the `next` dist-tag; `latest` still points at older rcs, so installs must resolve the explicit range). Existing peerDeps stay: `dsh-agent` (installModelSelection), `dsh-session`/`dsh-sdk-protocol` (transitive type surface; re-evaluate at 0.1 if redundant).
 
 ## D6 — Real verification (keyless, real process, real stdio)
 
