@@ -103,9 +103,10 @@ const FAKE_LLM = {
 }
 
 describe('plugin declaration', () => {
-  it('keeps the stable name and the official hard dependency', () => {
+  it('keeps the stable name and injects the session-lifecycle services', () => {
     expect(name).toBe('knowme-sdk-bridge')
-    expect(inject).toEqual(['agents'])
+    // sessions + sessionPersistence added so the bridge can own session/prompt (resume-from-JSONL, design D3/D4).
+    expect(inject).toEqual(['agents', 'sessions', 'sessionPersistence'])
   })
 
   it('Config defaults maxTokensAsSuccess to false (official parity)', () => {

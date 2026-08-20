@@ -99,6 +99,18 @@ const toolsLib = libText('@deepseek-ai/dsh-tools')
 check(toolsLib.includes('approval.request') || toolsLib.includes('approval?.request'), 'tool executor calls approval.request')
 check(toolsLib.includes('callId: exec.callId') || /callId:\s*\w+\.callId/.test(toolsLib), 'tool executor passes callId (scan precondition)')
 
+console.log('\n[8] session-lifecycle surfaces (bridge owns session/prompt — design D4)')
+// AgentRegistry.resume + create back the three-state gate; SessionId brands every id the gate
+// passes to the registry; createUserMessage delivers the prompt. The sessionPersistence.list/inspect
+// service is host-composed (not bundled in the dsh-session npm package), so its shape is pinned by
+// the runtime spike (verify:spike) rather than here.
+check(typeof agent.AgentRegistry?.prototype.resume === 'function', 'AgentRegistry.resume(resumeSessionId) exists')
+check(typeof agent.AgentRegistry?.prototype.create === 'function', 'AgentRegistry.create(sessionId) exists')
+const sessionMod = await import('@deepseek-ai/dsh-session')
+check(typeof sessionMod.SessionId === 'function', 'SessionId branding factory exported')
+const llmMod = await import('@deepseek-ai/dsh-llm')
+check(typeof llmMod.createUserMessage === 'function', 'createUserMessage exported')
+
 console.log('')
 if (failures.length > 0) {
   console.error(`[verify:contract] FAILED — ${failures.length} surface(s) drifted from the pinned contract:`)

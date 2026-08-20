@@ -18,7 +18,9 @@ import Schema from '@deepseek-ai/schemastery'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
+import type { SessionPromptParams } from '@deepseek-ai/dsh-sdk-protocol'
 import { HarnessSdkJsonRpcServer } from '@deepseek-ai/dsh-sdk-jsonrpc-server'
 import type { Readable, Writable } from 'node:stream'
 import {
@@ -29,6 +31,7 @@ import {
   type ModelSelectionInstaller,
   type QuestionProviderLike,
 } from './bridge.js'
+import { resolvePromptAgent, type AgentOptionsLike, type SessionLifecycleDeps } from './session-lifecycle.js'
 
 export { createBridge, recoverApprovalId } from './bridge.js'
 export type {
@@ -46,7 +49,7 @@ export const name = 'knowme-sdk-bridge'
  * service degrades its own method instead of failing plugin load. `approval`
  * is consumed passively through the `approval/request` waterfall.
  */
-export const inject = ['agents'] as const
+export const inject = ['agents', 'sessions', 'sessionPersistence'] as const
 
 /** JSON-RPC deployment config plus runtime-only test hooks (mirrors the official server). */
 export interface JsonRpcConfig {
@@ -103,8 +106,44 @@ export function apply(ctx: BridgePluginContext, config: JsonRpcConfig): void {
     return exitTask
   }
 
+  // The stock server's cwd/provider/model are private (set at initialize); the bridge captures them
+  // from the request stream so it can construct/resume agents itself for session/prompt (design D3).
+  let initParams: { cwd: string; agentOptions: AgentOptionsLike } | undefined
+  const lifecycleDeps: SessionLifecycleDeps = {
+    agents: ctx.agents as SessionLifecycleDeps['agents'],
+    sessions: ctx.get('sessions') as SessionLifecycleDeps['sessions'],
+    persistence: ctx.get('sessionPersistence') as SessionLifecycleDeps['persistence'],
+  }
+
   transport.onRequest(async (method, params) => {
     if (method.startsWith('knowme/')) return bridge.handleRequest(method, params)
+    if (method === 'initialize') {
+      // Capture params for our own create/resume, THEN delegate initialize to the stock server
+      // unchanged (adapter mount, provider/model/cwd binding, deepseek fallback).
+      const p = (params ?? {}) as { cwd?: string; provider?: string; model?: string; maxTokens?: number }
+      if (typeof p.cwd === 'string' && typeof p.provider === 'string' && typeof p.model === 'string') {
+        initParams = {
+          cwd: p.cwd,
+          agentOptions: { provider: p.provider, model: p.model, ...(typeof p.maxTokens === 'number' ? { maxTokens: p.maxTokens } : {}) },
+        }
+      }
+      return server.handleRequest(method, params)
+    }
+    if (method === 'session/prompt') {
+      // Bridge owns session/prompt lifecycle: three-state resolve (reuse/resume/create) so a persisted
+      // session reopens its JSONL instead of colliding on create (design D4). Delivery mirrors the stock
+      // server's prompt(): createUserMessage + agent.followup → { messageId }.
+      const p = (params ?? {}) as Partial<SessionPromptParams>
+      if (typeof p.sessionId !== 'string') throw new Error('session/prompt: sessionId must be a string')
+      const agent = await resolvePromptAgent(lifecycleDeps, {
+        sessionId: p.sessionId,
+        cwd: initParams?.cwd ?? '',
+        agentOptions: initParams?.agentOptions,
+      })
+      const message = createUserMessage({ content: p.contentBlocks ?? [], source: { kind: 'user' } })
+      agent.followup(message)
+      return { messageId: message.id }
+    }
     const result = await server.handleRequest(method, params)
     if (method === 'shutdown') {
       setImmediate(() => { void disposeAndExit() })
@@ -117,7 +156,11 @@ export function apply(ctx: BridgePluginContext, config: JsonRpcConfig): void {
   // teardown below settles pending approvals/questions BEFORE the official
   // server's shutdown disposes agents and closes the transport, keeping the
   // settle → approval/decided audit append → session/event chain alive while
-  // persistence and subscribers still run (design D1).
+  // persistence and subscribers still run (design D1). The bridge does NOT
+  // dispose the agents it creates: they are owned by the AgentRegistry service
+  // ctx and drained on ITS unload (composed before the bridge, disposed after),
+  // which fires agent/disposed AFTER this settle enqueues approval/decided —
+  // an explicit bridge-side dispose here races that append and drops it.
   ctx.effect(() => {
     transport.start()
     return async () => {
