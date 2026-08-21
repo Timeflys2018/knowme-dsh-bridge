@@ -178,6 +178,23 @@ console.log('\n[11] session-stats projection surfaces (knowme/sessionStats rich 
   }
 }
 
+console.log('\n[12] permission-presets service surfaces (knowme/permission.get + set)')
+{
+  const profileNm = join(homedir(), '.dsh', 'profiles', 'node_modules', '@deepseek-ai')
+  const ppPath = join(profileNm, 'dsh-permission-presets', 'src', 'index.ts')
+  if (!existsSync(ppPath)) {
+    console.log('  ⚠ skipped — dsh profile not installed (verify:spike pins this against the live runtime)')
+  } else {
+    const src = readFileSync(ppPath, 'utf8')
+    check(/super\(ctx,\s*'permissionPresets'\)/.test(src), "service registers as 'permissionPresets'")
+    check(/key:\s*'permissions'/.test(src), "session projection key === 'permissions'")
+    check(/\bresolve\s*\(\s*name\s*:\s*string\s*\)\s*:\s*PresetSpec\b/.test(src), 'public resolve(name): PresetSpec present')
+    check(/\bset\s*\(\s*session\s*:\s*Session\s*,\s*name\s*:\s*string\s*\)\s*:\s*void\b/.test(src), 'public set(session, name): void present')
+    const ver = require(join(profileNm, 'dsh-permission-presets', 'package.json')).version
+    check(ver === PINNED, `@deepseek-ai/dsh-permission-presets@${ver} === ${PINNED}`)
+  }
+}
+
 console.log('')
 if (failures.length > 0) {
   console.error(`[verify:contract] FAILED — ${failures.length} surface(s) drifted from the pinned contract:`)

@@ -25,10 +25,22 @@
 - id: subprocess
   name: '@deepseek-ai/dsh-subprocess-local'
 
-- id: bash
-  name: '@deepseek-ai/dsh-bash-local'
+# Confining shell stack (mirrors dsh-base): permission-presets refuses to compose
+# over an unconfined executor, so T6/T6b need the same sandbox-local → sandbox-policy
+# → bash-sandbox chain the real knowme-sdk profile boots. bash-sandbox registers as
+# ctx.shell and supplies the sandboxMode the presets service reads.
+- id: sandbox
+  name: '@deepseek-ai/dsh-sandbox-local'
+
+- id: sandbox-policy
+  name: '@deepseek-ai/dsh-sandbox-policy'
   config:
-    cwd: __CWD__
+    mode: 'workspace-write'
+    workspaceRoot: __CWD__
+
+- id: bash-sandbox
+  name: '@deepseek-ai/dsh-bash-sandbox'
+  config:
     timeoutMs: 60000
 
 - id: agent-spine
@@ -103,6 +115,20 @@
 
 - id: approval
   name: '@deepseek-ai/dsh-user-approval'
+
+- id: permission-presets
+  name: '@deepseek-ai/dsh-permission-presets'
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
 
 - id: user-questions
   name: '@deepseek-ai/dsh-user-questions'

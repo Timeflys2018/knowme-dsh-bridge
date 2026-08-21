@@ -364,6 +364,74 @@ await tier('T5 sessionStats telemetry snapshot', async (run) => {
   if ((await run.exitPromise) !== 0) throw new Error('non-zero exit')
 })
 
+await tier('T6 permission get→set→get round-trip', async (run) => {
+  await run.request('initialize', { cwd: run.dir, provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+  await run.request('session/prompt', { sessionId: 't6', contentBlocks: [{ type: 'text', text: 'boot the session so an agent exists' }] })
+  await run.waitFor(turnEnd('t6'), 'turn/end for t6')
+
+  const got = await run.request('knowme/permission.get', { sessionId: 't6' })
+  if (got.error !== undefined) throw new Error(`permission.get errored: ${JSON.stringify(got.error)}`)
+  const opts = got.result?.options ?? []
+  if (!Array.isArray(opts) || opts.length === 0) throw new Error(`permission.get returned no options (presets not composed?): ${JSON.stringify(got.result)}`)
+  const values = opts.map((o) => o.value)
+  const target = values.find((v) => v !== got.result.preset)
+  if (target === undefined) throw new Error(`no alternate preset to switch to: ${JSON.stringify(got.result)}`)
+  ok(`permission.get → preset=${got.result.preset} options=[${values.join(', ')}]`)
+
+  const set = await run.request('knowme/permission.set', { sessionId: 't6', preset: target })
+  if (set.error !== undefined) throw new Error(`permission.set(${target}) errored: ${JSON.stringify(set.error)}`)
+  if (set.result?.resolved !== true) throw new Error(`permission.set did not resolve: ${JSON.stringify(set.result)}`)
+  ok(`permission.set(${target}) → {resolved:true}`)
+
+  const after = await run.request('knowme/permission.get', { sessionId: 't6' })
+  if (after.result?.preset !== target) throw new Error(`preset did not switch: expected ${target}, got ${after.result?.preset}`)
+  ok(`permission.get after set → preset=${after.result.preset} (switch observed via projection)`)
+
+  const custom = await run.request('knowme/permission.set', { sessionId: 't6', preset: 'custom' })
+  if (custom.error === undefined || !/unknown-preset/.test(JSON.stringify(custom.error))) {
+    throw new Error(`set('custom') should reject with unknown-preset: ${JSON.stringify(custom)}`)
+  }
+  ok("permission.set('custom') → unknown-preset (never a settable target)")
+
+  const sd = await run.request('shutdown', {})
+  if (sd.result === undefined) throw new Error('T6 shutdown failed')
+  if ((await run.exitPromise) !== 0) throw new Error('T6 non-zero exit')
+})
+
+await tier('T6b preset survives resume-across-recycle', async (run) => {
+  await run.request('initialize', { cwd: run.dir, provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+  await run.request('session/prompt', { sessionId: 't6b', contentBlocks: [{ type: 'text', text: 'boot before switching preset' }] })
+  await run.waitFor(turnEnd('t6b'), 'turn/end for t6b (process 1)')
+
+  const before = await run.request('knowme/permission.get', { sessionId: 't6b' })
+  const values = (before.result?.options ?? []).map((o) => o.value)
+  const target = values.find((v) => v !== before.result.preset)
+  if (target === undefined) throw new Error(`no alternate preset for t6b: ${JSON.stringify(before.result)}`)
+  const set = await run.request('knowme/permission.set', { sessionId: 't6b', preset: target })
+  if (set.error !== undefined) throw new Error(`t6b set errored: ${JSON.stringify(set.error)}`)
+  ok(`process 1 switched t6b preset → ${target}`)
+
+  const sd1 = await run.request('shutdown', {})
+  if (sd1.result === undefined) throw new Error('t6b process-1 shutdown failed')
+  if ((await run.exitPromise) !== 0) throw new Error('t6b process-1 non-zero exit')
+
+  const run2 = new SpikeRun('T6b-p2', run.dir)
+  await run2.start()
+  await run2.request('initialize', { cwd: run.dir, provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+  await run2.request('session/prompt', { sessionId: 't6b', contentBlocks: [{ type: 'text', text: 'resume — is my preset still set?' }] })
+  await run2.waitFor(turnEnd('t6b'), 'turn/end for t6b (process 2)')
+
+  const resumed = await run2.request('knowme/permission.get', { sessionId: 't6b' })
+  if (resumed.result?.preset !== target) {
+    throw new Error(`preset lost across recycle: expected ${target}, got ${resumed.result?.preset} (fold not replayed from log)`)
+  }
+  ok(`process 2 RESUMED t6b with preset=${resumed.result.preset} (survived from the session log fold)`)
+
+  const sd2 = await run2.request('shutdown', {})
+  if (sd2.result === undefined) throw new Error('t6b process-2 shutdown failed')
+  if ((await run2.exitPromise) !== 0) throw new Error('t6b process-2 non-zero exit')
+})
+
 // NOTE — W2 torn-log ("resume-fails → clean error, never silent fresh-create") is NOT spiked here.
 // Empirically (persistence-jsonl rc.8) dsh's loader is corruption-TOLERANT at every layer the resolver
 // touches: a corrupt HEADER is silently EXCLUDED from list() (parseHeaderMeta returns undefined → the
@@ -380,4 +448,4 @@ if (failures.length > 0) {
   console.error(`[verify:spike] FAILED: ${failures.join(', ')} (run root: ${RUN_ROOT})`)
   process.exit(1)
 }
-console.log('[verify:spike] OK — T1 T2 T3 T3b T4 T5 all passed')
+console.log('[verify:spike] OK — T1 T2 T3 T3b T4 T5 T6 T6b all passed')

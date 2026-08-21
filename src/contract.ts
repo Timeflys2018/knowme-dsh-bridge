@@ -30,6 +30,7 @@ export const REQUIRED_SERVICES = [
   'userQuestions', // ask-user provider for knowme/question-respond
   'loader', // cordis-plugin-loader entry tree for knowme/listPlugins (soft-probed; absent → empty list)
   'sessionProjections', // per-session token/context telemetry for knowme/sessionStats (soft-probed; absent → empty snapshot)
+  'permissionPresets', // sandbox/approval preset get/set for knowme/permission.* (soft-probed; absent → permission-unavailable / empty)
 ] as const
 
 export type RequiredService = (typeof REQUIRED_SERVICES)[number]
@@ -41,6 +42,8 @@ export const BRIDGE_METHODS = {
   questionRespond: 'knowme/question-respond',
   listPlugins: 'knowme/listPlugins',
   sessionStats: 'knowme/sessionStats',
+  permissionGet: 'knowme/permission.get',
+  permissionSet: 'knowme/permission.set',
 } as const
 
 /** Notification method names this bridge pushes to the out-of-process client. */
@@ -61,6 +64,10 @@ export const ERROR_NAMES = {
   approvalNotFound: 'approval-not-found',
   questionNotFound: 'question-not-found',
   userQuestionsUnavailable: 'user-questions-unavailable',
+  permissionUnavailable: 'permission-unavailable',
+  unknownPreset: 'unknown-preset',
+  permissionLocked: 'permission-locked',
+  permissionWriteFailed: 'permission-write-failed',
 } as const
 
 /**
@@ -142,4 +149,17 @@ export interface DshSessionStats {
   readonly firstTokenMs?: number
   readonly tokPerSec?: number
   readonly cacheHitRatio?: number
+}
+
+/**
+ * A dsh session's permission preset snapshot for `knowme/permission.get` — the
+ * current preset id and the selectable options, projected from dsh's
+ * `permissions` projection. `preset` is null when the projection is absent
+ * (permission-presets not composed) or the session has no live agent, so the
+ * consumer hides the control. `preset` may be `'custom'` (a fold that matches no
+ * named preset) — a valid read value but never a `knowme/permission.set` target.
+ */
+export interface DshPermission {
+  readonly preset: string | null
+  readonly options: readonly { readonly value: string; readonly name: string; readonly description?: string }[]
 }

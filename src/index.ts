@@ -29,6 +29,8 @@ import {
   type BridgePluginContext,
   type LlmLike,
   type LoaderLike,
+  type PermissionPresetsLike,
+  type ApprovalServiceLike,
   type ModelSelectionInstaller,
   type QuestionProviderLike,
   type SessionProjectionsLike,
@@ -90,11 +92,17 @@ export function apply(ctx: BridgePluginContext, config: JsonRpcConfig): void {
   // absent → the bridge degrades that method to an empty list (see bridge.ts listPlugins).
   const loader = ctx.get('loader') as LoaderLike | undefined
   const sessionProjections = ctx.get('sessionProjections') as SessionProjectionsLike | undefined
+  // Soft-probe permission-presets (composed in dsh-base) for knowme/permission.set, and the approval
+  // service for the notice-injecting policy write; either absent → the bridge degrades set accordingly.
+  const permissionPresets = ctx.get('permissionPresets') as PermissionPresetsLike | undefined
+  const approvalService = ctx.get('approval') as ApprovalServiceLike | undefined
   const bridge = createBridge({
     agents: ctx.agents as { get(sessionId: string): AgentLike | undefined },
     ...(llm === undefined ? {} : { llm }),
     ...(loader === undefined ? {} : { loader }),
     ...(sessionProjections === undefined ? {} : { sessionProjections }),
+    ...(permissionPresets === undefined ? {} : { permissionPresets }),
+    ...(approvalService === undefined ? {} : { approvalService }),
     notify: (method, params) => { transport.notify(method, params) },
     installModelSelection: installRealSelection,
     logger: ctx.logger,

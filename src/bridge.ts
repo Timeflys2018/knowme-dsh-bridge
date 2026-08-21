@@ -22,6 +22,7 @@ import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import {
   BRIDGE_METHODS,
   BRIDGE_NOTIFICATIONS,
+  type DshPermission,
   type DshSessionStats,
   ERROR_NAMES,
   type PluginFiberPhase,
@@ -127,16 +128,33 @@ export interface SessionStatsProjectionLike {
   readonly decodeTokens: number
 }
 
+export interface PermissionSelectLike {
+  readonly options: readonly { readonly value: string; readonly name: string; readonly description?: string }[]
+  readonly currentValue: string
+}
+
 export interface ProjectionSnapshotLike {
   readonly values: {
     readonly tokenUsage?: TokenUsageProjectionLike
     readonly contextPressure?: ContextPressureProjectionLike
     readonly sessionStats?: SessionStatsProjectionLike
+    readonly permissions?: PermissionSelectLike
   }
 }
 
 export interface SessionProjectionsLike {
   snapshot(session: object): ProjectionSnapshotLike
+}
+
+/** dsh permission-presets service surface for knowme/permission.set (structural; no runtime dsh import). */
+export interface PermissionPresetsLike {
+  resolve(name: string): { readonly sandbox: string; readonly approval: string }
+  set(session: object, name: string): void
+}
+
+/** dsh approval service surface — the notice-injecting policy write the /permission command uses. */
+export interface ApprovalServiceLike {
+  setPolicy(agent: object, policy: string): void
 }
 
 export interface BridgeDeps {
@@ -146,6 +164,10 @@ export interface BridgeDeps {
   readonly loader?: LoaderLike
   /** cordis token-meter projections for knowme/sessionStats; absent → empty snapshot. */
   readonly sessionProjections?: SessionProjectionsLike
+  /** dsh permission-presets service for knowme/permission.set; absent → permission-unavailable. */
+  readonly permissionPresets?: PermissionPresetsLike
+  /** dsh approval service for the notice-injecting policy write; absent → set() alone (no notice). */
+  readonly approvalService?: ApprovalServiceLike
   readonly notify: (method: string, params: object) => void
   readonly installModelSelection?: ModelSelectionInstaller
   readonly logger?: { warn(message: string): void }
@@ -455,6 +477,48 @@ export function createBridge(deps: BridgeDeps): Bridge {
     return stats
   }
 
+  async function permissionGet(params: Record<string, unknown> | undefined): Promise<DshPermission> {
+    const sessionId = requireString(params, BRIDGE_METHODS.permissionGet, 'sessionId')
+    const empty: DshPermission = { preset: null, options: [] }
+    const projections = deps.sessionProjections
+    const agent = deps.agents.get(sessionId)
+    if (projections === undefined || agent === undefined) return empty
+    const perm = projections.snapshot(agent.session).values.permissions
+    if (perm === undefined) return empty
+    return { preset: perm.currentValue, options: perm.options.map((o) => ({ value: o.value, name: o.name, ...(o.description === undefined ? {} : { description: o.description }) })) }
+  }
+
+  async function permissionSet(params: Record<string, unknown> | undefined): Promise<unknown> {
+    const method = BRIDGE_METHODS.permissionSet
+    const sessionId = requireString(params, method, 'sessionId')
+    const preset = requireString(params, method, 'preset')
+    if (preset === 'custom') throw new Error(`${ERROR_NAMES.unknownPreset}: 'custom' is not a settable preset`)
+    const agent = deps.agents.get(sessionId)
+    if (agent === undefined) throw new Error(`${ERROR_NAMES.sessionNotFound}: ${sessionId}`)
+    const presets = deps.permissionPresets
+    if (presets === undefined) throw new Error(`${ERROR_NAMES.permissionUnavailable}: ${method} requires the permissionPresets service`)
+
+    let spec: { sandbox: string; approval: string }
+    try {
+      spec = presets.resolve(preset)
+    } catch {
+      throw new Error(`${ERROR_NAMES.unknownPreset}: ${preset}`)
+    }
+    // Replicate the /permission command's effect using public methods (design D2): the notice-injecting
+    // approval write FIRST (so the model sees the switch as a conversation event), then set() — whose
+    // internal apply() then sees the approval already == spec.approval and skips the raw (notice-less)
+    // write, still emitting the preset + sandbox/mode events. Absent approval service → set() alone.
+    try {
+      deps.approvalService?.setPolicy(agent, spec.approval)
+      presets.set(agent.session, preset)
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      if (/cannot change sandbox mode/i.test(msg)) throw new Error(`${ERROR_NAMES.permissionLocked}: ${msg}`)
+      throw new Error(`${ERROR_NAMES.permissionWriteFailed}: ${msg}`)
+    }
+    return { resolved: true }
+  }
+
   const approvalAsk: ApprovalAskListener = (req, next) => {
     // Microtask-race guard (api-proxy.ts:1396): an abort that landed before
     // this listener ran must never register a never-firing listener.
@@ -536,6 +600,10 @@ export function createBridge(deps: BridgeDeps): Bridge {
           return listPlugins()
         case BRIDGE_METHODS.sessionStats:
           return sessionStats(params)
+        case BRIDGE_METHODS.permissionGet:
+          return permissionGet(params)
+        case BRIDGE_METHODS.permissionSet:
+          return permissionSet(params)
         default:
           throw new Error(`unknown knowme-dsh-bridge method: ${method}`)
       }
