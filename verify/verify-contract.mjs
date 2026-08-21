@@ -111,6 +111,26 @@ check(typeof sessionMod.SessionId === 'function', 'SessionId branding factory ex
 const llmMod = await import('@deepseek-ai/dsh-llm')
 check(typeof llmMod.createUserMessage === 'function', 'createUserMessage exported')
 
+console.log('\n[9] cordis FiberState enum (knowme/listPlugins fiberPhase mapping)')
+// The bridge's FIBER_PHASE maps cordis FiberState numeric values → phase strings. FiberState is a
+// compile-time `const enum` (erased at runtime), so pin the numeric values by scanning the type
+// declaration. A dsh/cordis change to these numbers must fail CI (the mapping would silently drift).
+// The loader `entries()` shape (options.name/group, disabled, fiber.state) is a host-composed surface
+// validated by the runtime spike (verify:spike), mirroring sessionPersistence in [8].
+{
+  const cordisFiberDts = join(
+    dirname(require.resolve('@deepseek-ai/cordis/package.json')),
+    'lib', 'types', 'fiber.d.ts',
+  )
+  const fiberDts = readFileSync(cordisFiberDts, 'utf8')
+  const expectedStates = [
+    ['PENDING', 0], ['LOADING', 1], ['ACTIVE', 2], ['FAILED', 3], ['DISPOSED', 4], ['UNLOADING', 5],
+  ]
+  for (const [label, value] of expectedStates) {
+    check(new RegExp(`${label}\\s*=\\s*${value}\\b`).test(fiberDts), `FiberState.${label} === ${value}`)
+  }
+}
+
 console.log('')
 if (failures.length > 0) {
   console.error(`[verify:contract] FAILED — ${failures.length} surface(s) drifted from the pinned contract:`)

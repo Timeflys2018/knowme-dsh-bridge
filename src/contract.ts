@@ -28,6 +28,7 @@ export const REQUIRED_SERVICES = [
   'llm', // provider/model routing for knowme/selectModel
   'approval', // approval/request waterfall + audit events for knowme/approval-respond
   'userQuestions', // ask-user provider for knowme/question-respond
+  'loader', // cordis-plugin-loader entry tree for knowme/listPlugins (soft-probed; absent → empty list)
 ] as const
 
 export type RequiredService = (typeof REQUIRED_SERVICES)[number]
@@ -37,6 +38,7 @@ export const BRIDGE_METHODS = {
   selectModel: 'knowme/selectModel',
   approvalRespond: 'knowme/approval-respond',
   questionRespond: 'knowme/question-respond',
+  listPlugins: 'knowme/listPlugins',
 } as const
 
 /** Notification method names this bridge pushes to the out-of-process client. */
@@ -71,4 +73,26 @@ export interface QuestionAnswerItem {
   readonly selected: readonly string[]
   /** Optional free-text "Other" answer. */
   readonly custom?: string
+}
+
+/**
+ * Lifecycle phase of a plugin entry's root cordis Fiber, or null when it has no
+ * live root fiber (disposed). Mirrors dsh host/plugin-inventory PluginFiberPhase.
+ */
+export type PluginFiberPhase = 'pending' | 'loading' | 'active' | 'failed' | 'unloading' | null
+
+/**
+ * One loaded dsh plugin entry, projected from the cordis loader entry tree for
+ * `knowme/listPlugins`. Field-identical to dsh's own PluginInventoryEntry
+ * (host/plugin-inventory/src/types.ts), which its Web Plugins settings tab uses.
+ */
+export interface PluginInventoryItem {
+  /** Stable loader-tree id of the entry. */
+  readonly entryId: string
+  /** Exact module specifier the loader imported, e.g. '@deepseek-ai/dsh-agent'. */
+  readonly moduleName: string
+  /** Effective loader enablement (false if the entry or an ancestor group is disabled). */
+  readonly enabled: boolean
+  /** Root fiber phase, or null when disposed. */
+  readonly fiberPhase: PluginFiberPhase
 }

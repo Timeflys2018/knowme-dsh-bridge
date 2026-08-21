@@ -23,6 +23,8 @@ import {
   BRIDGE_METHODS,
   BRIDGE_NOTIFICATIONS,
   ERROR_NAMES,
+  type PluginFiberPhase,
+  type PluginInventoryItem,
   type QuestionAnswerItem,
 } from './contract.js'
 
@@ -83,12 +85,46 @@ export interface QuestionProviderLike {
   ask(request: QuestionRequestLike): Promise<QuestionAnswerLike>
 }
 
+/**
+ * Structural view of one cordis loader entry the plugin projection reads. Mirrors
+ * the fields dsh's own PluginInventoryGateway consumes (host/plugin-inventory):
+ * `id`, `options.name`/`options.group`, the effective `disabled` getter, and the
+ * root `fiber.state` (a cordis FiberState numeric enum). Typed locally so unit
+ * tests use structural fakes and the bridge keeps no runtime dsh import.
+ */
+export interface LoaderEntryLike {
+  readonly id: string
+  readonly options: { readonly name: string; readonly group?: boolean }
+  readonly disabled: boolean
+  readonly fiber?: { readonly state: number }
+}
+
+export interface LoaderLike {
+  entries(): Iterable<LoaderEntryLike>
+}
+
 export interface BridgeDeps {
   readonly agents: { get(sessionId: string): AgentLike | undefined }
   readonly llm?: LlmLike
+  /** cordis-plugin-loader entry tree for knowme/listPlugins; absent → empty plugin list. */
+  readonly loader?: LoaderLike
   readonly notify: (method: string, params: object) => void
   readonly installModelSelection?: ModelSelectionInstaller
   readonly logger?: { warn(message: string): void }
+}
+
+/**
+ * cordis FiberState (numeric const enum) → public phase string. Verbatim mirror
+ * of dsh host/plugin-inventory FIBER_PHASE: 0 PENDING, 1 LOADING, 2 ACTIVE,
+ * 3 FAILED, 4 DISPOSED (→ null), 5 UNLOADING. verify:contract pins these values.
+ */
+const FIBER_PHASE: Readonly<Record<number, PluginFiberPhase>> = {
+  0: 'pending',
+  1: 'loading',
+  2: 'active',
+  3: 'failed',
+  4: null,
+  5: 'unloading',
 }
 
 /**
@@ -309,6 +345,25 @@ export function createBridge(deps: BridgeDeps): Bridge {
     return items
   }
 
+  async function listPlugins(): Promise<{ entries: PluginInventoryItem[] }> {
+    // Read the loader directly (no cache), mirroring dsh's own PluginInventoryGateway.list()
+    // (host/plugin-inventory): skip group container entries, project each leaf entry. An absent
+    // loader (not composed) degrades to an empty list rather than failing the sidebar fetch.
+    const loader = deps.loader
+    if (loader === undefined) return { entries: [] }
+    const entries: PluginInventoryItem[] = []
+    for (const entry of loader.entries()) {
+      if (entry.options.group === true) continue
+      entries.push({
+        entryId: entry.id,
+        moduleName: entry.options.name,
+        enabled: !entry.disabled,
+        fiberPhase: entry.fiber === undefined ? null : (FIBER_PHASE[entry.fiber.state] ?? null),
+      })
+    }
+    return { entries }
+  }
+
   const approvalAsk: ApprovalAskListener = (req, next) => {
     // Microtask-race guard (api-proxy.ts:1396): an abort that landed before
     // this listener ran must never register a never-firing listener.
@@ -386,6 +441,8 @@ export function createBridge(deps: BridgeDeps): Bridge {
           return approvalRespond(params)
         case BRIDGE_METHODS.questionRespond:
           return questionRespond(params)
+        case BRIDGE_METHODS.listPlugins:
+          return listPlugins()
         default:
           throw new Error(`unknown knowme-dsh-bridge method: ${method}`)
       }
