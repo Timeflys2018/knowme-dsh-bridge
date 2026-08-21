@@ -116,10 +116,22 @@ export interface ContextPressureProjectionLike {
   readonly contextWindow?: number
 }
 
+export interface SessionStatsProjectionLike {
+  readonly turns: number
+  readonly steps: number
+  readonly llmMs: number
+  readonly toolMs: number
+  readonly ttftMs: number
+  readonly ttftSteps: number
+  readonly decodeMs: number
+  readonly decodeTokens: number
+}
+
 export interface ProjectionSnapshotLike {
   readonly values: {
     readonly tokenUsage?: TokenUsageProjectionLike
     readonly contextPressure?: ContextPressureProjectionLike
+    readonly sessionStats?: SessionStatsProjectionLike
   }
 }
 
@@ -397,13 +409,20 @@ export function createBridge(deps: BridgeDeps): Bridge {
     const agent = deps.agents.get(sessionId)
     if (projections === undefined || agent === undefined) return empty
 
-    const { tokenUsage, contextPressure } = projections.snapshot(agent.session).values
+    const { tokenUsage, contextPressure, sessionStats: ss } = projections.snapshot(agent.session).values
     const stats: {
       inputTokens: number
       outputTokens: number
       cacheReadTokens?: number
       cacheWriteTokens?: number
       contextPressure?: { tokens: number; window?: number }
+      turns?: number
+      steps?: number
+      llmMs?: number
+      toolMs?: number
+      firstTokenMs?: number
+      tokPerSec?: number
+      cacheHitRatio?: number
     } = {
       inputTokens: tokenUsage?.uncachedInputTokens ?? 0,
       outputTokens: tokenUsage?.outputTokens ?? 0,
@@ -415,6 +434,23 @@ export function createBridge(deps: BridgeDeps): Bridge {
         tokens: contextPressure.pressureTokens,
         ...(contextPressure.contextWindow === undefined ? {} : { window: contextPressure.contextWindow }),
       }
+    }
+    // session-stats projection (composed via the bundle patch): direct counts + derived rates. Omit a
+    // derived field when its denominator is 0 (fresh turn with no first-token/decode sample) rather
+    // than emitting NaN/Infinity.
+    if (ss !== undefined) {
+      stats.turns = ss.turns
+      stats.steps = ss.steps
+      stats.llmMs = ss.llmMs
+      stats.toolMs = ss.toolMs
+      if (ss.ttftSteps > 0) stats.firstTokenMs = ss.ttftMs / ss.ttftSteps
+      if (ss.decodeMs > 0) stats.tokPerSec = ss.decodeTokens / (ss.decodeMs / 1000)
+    }
+    // cacheHitRatio rides token-meter buckets (matches dsh web UI's "cache hit"), independent of
+    // session-stats: cacheRead / (uncachedInput + cacheRead + cacheWrite). Omit on a 0 denominator.
+    if (tokenUsage !== undefined) {
+      const denom = tokenUsage.uncachedInputTokens + (tokenUsage.cacheReadTokens ?? 0) + (tokenUsage.cacheWriteTokens ?? 0)
+      if (denom > 0 && tokenUsage.cacheReadTokens !== undefined) stats.cacheHitRatio = tokenUsage.cacheReadTokens / denom
     }
     return stats
   }

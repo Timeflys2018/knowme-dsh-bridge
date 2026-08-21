@@ -347,6 +347,18 @@ await tier('T5 sessionStats telemetry snapshot', async (run) => {
   if (!(tokens < window)) throw new Error(`pressure tokens (${tokens}) must be < context window (${window}) — wrong numerator/denominator?`)
   ok(`contextPressure sane: 0 < ${tokens} < ${window} (window=128000 as configured)`)
 
+  // session-stats graduation: after a real turn the sessionStats projection accrued at least one
+  // turn + step, and any derived rate present is finite-positive (never NaN/Infinity from a 0 denom).
+  if (!(s.turns >= 1)) throw new Error(`post-turn turns must be >= 1 (session-stats not composed?): ${JSON.stringify(s)}`)
+  if (!(s.steps >= 1)) throw new Error(`post-turn steps must be >= 1: ${JSON.stringify(s)}`)
+  if (s.firstTokenMs !== undefined && !(s.firstTokenMs > 0 && Number.isFinite(s.firstTokenMs))) {
+    throw new Error(`firstTokenMs must be finite-positive when present: ${JSON.stringify(s)}`)
+  }
+  if (s.tokPerSec !== undefined && !(s.tokPerSec > 0 && Number.isFinite(s.tokPerSec))) {
+    throw new Error(`tokPerSec must be finite-positive when present: ${JSON.stringify(s)}`)
+  }
+  ok(`session-stats: turns=${s.turns} steps=${s.steps} firstTokenMs=${s.firstTokenMs ?? '—'} tokPerSec=${s.tokPerSec ?? '—'}`)
+
   const shutdown = await run.request('shutdown', {})
   if (shutdown.result === undefined) throw new Error('shutdown failed')
   if ((await run.exitPromise) !== 0) throw new Error('non-zero exit')

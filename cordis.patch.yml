@@ -11,3 +11,9 @@
 - insert:
     - id: knowme-bridge
       name: '@knowme/dsh-bridge'
+    # Compose the session-stats projection (turns/steps/timing/first-token/throughput) so
+    # knowme/sessionStats can read values.sessionStats — dsh-base already provides the
+    # sessionProjections registry (its only inject), so this row is sufficient. Mirrors dsh's
+    # own web-app bundle, which is the only shipped bundle that composes session-stats.
+    - id: session-stats
+      name: '@deepseek-ai/dsh-session-stats'

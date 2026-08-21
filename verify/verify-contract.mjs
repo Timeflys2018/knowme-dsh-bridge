@@ -161,6 +161,23 @@ console.log('\n[10] token-meter projection surfaces (knowme/sessionStats mapping
   }
 }
 
+console.log('\n[11] session-stats projection surfaces (knowme/sessionStats rich metrics)')
+{
+  const profileNm = join(homedir(), '.dsh', 'profiles', 'node_modules', '@deepseek-ai')
+  const ssPath = join(profileNm, 'dsh-session-stats', 'src', 'projection.ts')
+  if (!existsSync(ssPath)) {
+    console.log('  ⚠ skipped — dsh profile not installed (verify:spike pins this against the live runtime)')
+  } else {
+    const src = readFileSync(ssPath, 'utf8')
+    check(/key:\s*'sessionStats'/.test(src), "sessionStats projection key === 'sessionStats'")
+    for (const field of ['turns', 'steps', 'llmMs', 'toolMs', 'ttftMs', 'ttftSteps', 'decodeMs', 'decodeTokens']) {
+      check(new RegExp(`\\b${field}\\b`).test(src), `SessionStatsProjection.${field} present`)
+    }
+    const ver = require(join(profileNm, 'dsh-session-stats', 'package.json')).version
+    check(ver === PINNED, `@deepseek-ai/dsh-session-stats@${ver} === ${PINNED}`)
+  }
+}
+
 console.log('')
 if (failures.length > 0) {
   console.error(`[verify:contract] FAILED — ${failures.length} surface(s) drifted from the pinned contract:`)

@@ -71,6 +71,7 @@ describe('knowme/sessionStats — token-meter projection snapshot', () => {
     values: {
       tokenUsage?: { uncachedInputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }
       contextPressure?: { pressureTokens?: number; contextWindow?: number }
+      sessionStats?: { turns: number; steps: number; llmMs: number; toolMs: number; ttftMs: number; ttftSteps: number; decodeMs: number; decodeTokens: number }
     }
   }
 
@@ -94,6 +95,8 @@ describe('knowme/sessionStats — token-meter projection snapshot', () => {
       cacheReadTokens: 12,
       cacheWriteTokens: 3,
       contextPressure: { tokens: 1000, window: 2000 },
+      // cacheHitRatio now rides the token buckets (graduated): 12 / (120 + 12 + 3) = 12/135.
+      cacheHitRatio: 12 / 135,
     })
   })
 
@@ -124,5 +127,63 @@ describe('knowme/sessionStats — token-meter projection snapshot', () => {
     const bridge = createBridge(harness.deps)
     const stats = (await bridge.handleRequest(BRIDGE_METHODS.sessionStats, { sessionId: 'nope' })) as DshSessionStats
     expect(stats).toEqual({ inputTokens: 0, outputTokens: 0 })
+  })
+
+  it('maps the sessionStats projection → turns/steps/llmMs/toolMs + derived firstTokenMs/tokPerSec + cacheHitRatio', async () => {
+    const harness = fakeBridgeDeps({
+      sessionProjections: projections({
+        's-rich': {
+          values: {
+            tokenUsage: { uncachedInputTokens: 100, outputTokens: 50, cacheReadTokens: 900, cacheWriteTokens: 0 },
+            sessionStats: { turns: 3, steps: 16, llmMs: 157000, toolMs: 706000, ttftMs: 6800, ttftSteps: 4, decodeMs: 2000, decodeTokens: 322 },
+          },
+        },
+      }),
+    })
+    harness.makeAgent('s-rich')
+    const bridge = createBridge(harness.deps)
+    const stats = (await bridge.handleRequest(BRIDGE_METHODS.sessionStats, { sessionId: 's-rich' })) as DshSessionStats
+    expect(stats.turns).toBe(3)
+    expect(stats.steps).toBe(16)
+    expect(stats.llmMs).toBe(157000)
+    expect(stats.toolMs).toBe(706000)
+    expect(stats.firstTokenMs).toBe(1700) // 6800 / 4
+    expect(stats.tokPerSec).toBe(161) // 322 / (2000/1000)
+    expect(stats.cacheHitRatio).toBeCloseTo(0.9, 5) // 900 / (100 + 900 + 0)
+  })
+
+  it('omits firstTokenMs when ttftSteps is 0 and tokPerSec when decodeMs is 0', async () => {
+    const harness = fakeBridgeDeps({
+      sessionProjections: projections({
+        's-edge': {
+          values: {
+            sessionStats: { turns: 1, steps: 1, llmMs: 10, toolMs: 0, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0 },
+          },
+        },
+      }),
+    })
+    harness.makeAgent('s-edge')
+    const bridge = createBridge(harness.deps)
+    const stats = (await bridge.handleRequest(BRIDGE_METHODS.sessionStats, { sessionId: 's-edge' })) as DshSessionStats
+    expect(stats.turns).toBe(1)
+    expect(stats.firstTokenMs).toBeUndefined()
+    expect(stats.tokPerSec).toBeUndefined()
+  })
+
+  it('omits all session-stats-derived fields when the sessionStats projection is absent', async () => {
+    const harness = fakeBridgeDeps({
+      sessionProjections: projections({
+        's-notok': { values: { tokenUsage: { uncachedInputTokens: 10, outputTokens: 5 } } },
+      }),
+    })
+    harness.makeAgent('s-notok')
+    const bridge = createBridge(harness.deps)
+    const stats = (await bridge.handleRequest(BRIDGE_METHODS.sessionStats, { sessionId: 's-notok' })) as DshSessionStats
+    expect(stats.turns).toBeUndefined()
+    expect(stats.steps).toBeUndefined()
+    expect(stats.firstTokenMs).toBeUndefined()
+    expect(stats.tokPerSec).toBeUndefined()
+    expect(stats.cacheHitRatio).toBeUndefined() // no cache buckets → denominator guard
+    expect(stats.inputTokens).toBe(10)
   })
 })

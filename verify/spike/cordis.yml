@@ -88,6 +88,9 @@
 - id: token-meter
   name: '@deepseek-ai/dsh-token-meter'
 
+- id: session-stats
+  name: '@deepseek-ai/dsh-session-stats'
+
 - id: compaction-basic
   name: '@deepseek-ai/dsh-compaction-basic'
   config:
