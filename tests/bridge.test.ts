@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { createBridge, type LoaderEntryLike } from '../src/bridge.js'
-import { BRIDGE_METHODS } from '../src/contract.js'
+import { createBridge, type LoaderEntryLike, type SessionProjectionsLike } from '../src/bridge.js'
+import { BRIDGE_METHODS, type DshSessionStats } from '../src/contract.js'
 import { fakeBridgeDeps } from './helpers.js'
 
 describe('knowme-dsh-bridge routing contract', () => {
@@ -55,5 +55,74 @@ describe('knowme/listPlugins — cordis loader projection', () => {
     const bridge = createBridge(fakeBridgeDeps().deps)
     const result = await bridge.handleRequest(BRIDGE_METHODS.listPlugins, {})
     expect(result).toEqual({ entries: [] })
+  })
+})
+
+describe('knowme/sessionStats — token-meter projection snapshot', () => {
+  function projections(byId: Record<string, ProjectionSnapshotFake>): SessionProjectionsLike {
+    return {
+      snapshot: (session: object): ProjectionSnapshotFake => {
+        const id = (session as { id?: string }).id ?? ''
+        return byId[id] ?? { values: {} }
+      },
+    }
+  }
+  interface ProjectionSnapshotFake {
+    values: {
+      tokenUsage?: { uncachedInputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }
+      contextPressure?: { pressureTokens?: number; contextWindow?: number }
+    }
+  }
+
+  it('maps uncachedInputTokens/outputTokens/cache + contextPressure for a live session with usage', async () => {
+    const harness = fakeBridgeDeps({
+      sessionProjections: projections({
+        's-live': {
+          values: {
+            tokenUsage: { uncachedInputTokens: 120, outputTokens: 45, cacheReadTokens: 12, cacheWriteTokens: 3 },
+            contextPressure: { pressureTokens: 1000, contextWindow: 2000 },
+          },
+        },
+      }),
+    })
+    harness.makeAgent('s-live')
+    const bridge = createBridge(harness.deps)
+    const stats = (await bridge.handleRequest(BRIDGE_METHODS.sessionStats, { sessionId: 's-live' })) as DshSessionStats
+    expect(stats).toEqual({
+      inputTokens: 120,
+      outputTokens: 45,
+      cacheReadTokens: 12,
+      cacheWriteTokens: 3,
+      contextPressure: { tokens: 1000, window: 2000 },
+    })
+  })
+
+  it('omits contextPressure for a live-but-idle session (distinguishes not-started from 0 tokens)', async () => {
+    const harness = fakeBridgeDeps({
+      sessionProjections: projections({
+        's-idle': { values: { tokenUsage: { uncachedInputTokens: 0, outputTokens: 0 } } },
+      }),
+    })
+    harness.makeAgent('s-idle')
+    const bridge = createBridge(harness.deps)
+    const stats = (await bridge.handleRequest(BRIDGE_METHODS.sessionStats, { sessionId: 's-idle' })) as DshSessionStats
+    expect(stats.contextPressure).toBeUndefined()
+    expect(stats.inputTokens).toBe(0)
+    expect(stats.outputTokens).toBe(0)
+  })
+
+  it('degrades to an empty snapshot when the projections service is absent', async () => {
+    const harness = fakeBridgeDeps()
+    harness.makeAgent('s-1')
+    const bridge = createBridge(harness.deps)
+    const stats = (await bridge.handleRequest(BRIDGE_METHODS.sessionStats, { sessionId: 's-1' })) as DshSessionStats
+    expect(stats).toEqual({ inputTokens: 0, outputTokens: 0 })
+  })
+
+  it('returns an empty snapshot for an unknown session id (no throw)', async () => {
+    const harness = fakeBridgeDeps({ sessionProjections: projections({}) })
+    const bridge = createBridge(harness.deps)
+    const stats = (await bridge.handleRequest(BRIDGE_METHODS.sessionStats, { sessionId: 'nope' })) as DshSessionStats
+    expect(stats).toEqual({ inputTokens: 0, outputTokens: 0 })
   })
 })

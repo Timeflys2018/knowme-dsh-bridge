@@ -316,6 +316,42 @@ await tier('T4-resume-across-recycle', async (run) => {
   if ((await run2.exitPromise) !== 0) throw new Error('process-2 non-zero exit')
 })
 
+await tier('T5 sessionStats telemetry snapshot', async (run) => {
+  await run.request('initialize', { cwd: run.dir, provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+
+  const idle = await run.request('knowme/sessionStats', { sessionId: 't5' })
+  if (idle.error !== undefined) throw new Error(`sessionStats(unknown) errored: ${JSON.stringify(idle.error)}`)
+  if (idle.result?.inputTokens !== 0 || idle.result?.outputTokens !== 0 || idle.result?.contextPressure !== undefined) {
+    throw new Error(`pre-turn snapshot should be empty (0/0, no contextPressure): ${JSON.stringify(idle.result)}`)
+  }
+  ok('pre-turn sessionStats → empty snapshot (0/0, contextPressure absent)')
+
+  await run.request('session/prompt', { sessionId: 't5', contentBlocks: [{ type: 'text', text: 'run a turn so telemetry accrues' }] })
+  await run.waitFor(turnEnd('t5'), 'turn/end for t5')
+
+  const after = await run.request('knowme/sessionStats', { sessionId: 't5' })
+  if (after.error !== undefined) throw new Error(`sessionStats(after turn) errored: ${JSON.stringify(after.error)}`)
+  const s = after.result
+  if (!(s.inputTokens > 0) || !(s.outputTokens > 0)) {
+    throw new Error(`post-turn token counts must be non-zero (fold field-name bug): ${JSON.stringify(s)}`)
+  }
+  ok(`post-turn tokens non-zero: in=${s.inputTokens} out=${s.outputTokens}`)
+
+  // B2 semantic assertion (design D1/Risks): a healthy pressure reading is a real
+  // prompt size strictly inside the model window — catches a wrong numerator
+  // (e.g. reading projectedTokens/output) or denominator (missing contextWindow).
+  if (s.contextPressure === undefined) throw new Error(`post-turn contextPressure must be present: ${JSON.stringify(s)}`)
+  const { tokens, window } = s.contextPressure
+  if (!(tokens > 0)) throw new Error(`pressure tokens must be > 0: ${JSON.stringify(s.contextPressure)}`)
+  if (typeof window !== 'number' || !(window > 0)) throw new Error(`context window must be a positive number: ${JSON.stringify(s.contextPressure)}`)
+  if (!(tokens < window)) throw new Error(`pressure tokens (${tokens}) must be < context window (${window}) — wrong numerator/denominator?`)
+  ok(`contextPressure sane: 0 < ${tokens} < ${window} (window=128000 as configured)`)
+
+  const shutdown = await run.request('shutdown', {})
+  if (shutdown.result === undefined) throw new Error('shutdown failed')
+  if ((await run.exitPromise) !== 0) throw new Error('non-zero exit')
+})
+
 // NOTE — W2 torn-log ("resume-fails → clean error, never silent fresh-create") is NOT spiked here.
 // Empirically (persistence-jsonl rc.8) dsh's loader is corruption-TOLERANT at every layer the resolver
 // touches: a corrupt HEADER is silently EXCLUDED from list() (parseHeaderMeta returns undefined → the
@@ -332,4 +368,4 @@ if (failures.length > 0) {
   console.error(`[verify:spike] FAILED: ${failures.join(', ')} (run root: ${RUN_ROOT})`)
   process.exit(1)
 }
-console.log('[verify:spike] OK — T1 T2 T3 T3b T4 all passed')
+console.log('[verify:spike] OK — T1 T2 T3 T3b T4 T5 all passed')

@@ -19,8 +19,9 @@
  *     scan's callId symmetry precondition — see design D3 latent limitation)
  */
 
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -128,6 +129,35 @@ console.log('\n[9] cordis FiberState enum (knowme/listPlugins fiberPhase mapping
   ]
   for (const [label, value] of expectedStates) {
     check(new RegExp(`${label}\\s*=\\s*${value}\\b`).test(fiberDts), `FiberState.${label} === ${value}`)
+  }
+}
+
+console.log('\n[10] token-meter projection surfaces (knowme/sessionStats mapping)')
+{
+  // token-meter + session-projection are host-composed (loaded from the dsh
+  // profile at runtime, NOT bridge deps), so resolve them from the profile's
+  // node_modules — the exact tree dsh imports. Absent profile (e.g. bare CI)
+  // degrades to a skip, mirroring how [8]/[9] defer host-composed shapes to
+  // the runtime spike (verify:spike pins them for real against a live runtime).
+  const profileNm = join(homedir(), '.dsh', 'profiles', 'node_modules', '@deepseek-ai')
+  const projPath = join(profileNm, 'dsh-token-meter', 'src', 'projection.ts')
+  const regPath = join(profileNm, 'dsh-session-projection', 'src', 'index.ts')
+  if (!existsSync(projPath) || !existsSync(regPath)) {
+    console.log('  ⚠ skipped — dsh profile not installed (verify:spike pins these against the live runtime)')
+  } else {
+    const projectionSrc = readFileSync(projPath, 'utf8')
+    for (const field of ['uncachedInputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens']) {
+      check(new RegExp(`\\b${field}\\b`).test(projectionSrc), `TokenUsageProjection.${field} present`)
+    }
+    const [tokenUsageBlock] = projectionSrc.split('ContextPressure')
+    check(!/\binputTokens\s*:/.test(tokenUsageBlock ?? projectionSrc),
+      'TokenUsageProjection uses uncachedInputTokens (NOT inputTokens) for cumulative input')
+    for (const field of ['pressureTokens', 'contextWindow']) {
+      check(new RegExp(`\\b${field}\\b`).test(projectionSrc), `ContextPressureProjection.${field} present`)
+    }
+    const registrySrc = readFileSync(regPath, 'utf8')
+    check(/snapshot\s*\(\s*session\s*:/.test(registrySrc), 'SessionProjectionRegistry.snapshot(session) exists')
+    check(/values\s*:\s*Partial<SessionProjectionMap>/.test(registrySrc), 'ProjectionSnapshot.values keyed by projection name')
   }
 }
 

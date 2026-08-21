@@ -22,6 +22,7 @@ import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import {
   BRIDGE_METHODS,
   BRIDGE_NOTIFICATIONS,
+  type DshSessionStats,
   ERROR_NAMES,
   type PluginFiberPhase,
   type PluginInventoryItem,
@@ -103,11 +104,36 @@ export interface LoaderLike {
   entries(): Iterable<LoaderEntryLike>
 }
 
+export interface TokenUsageProjectionLike {
+  readonly uncachedInputTokens: number
+  readonly outputTokens: number
+  readonly cacheReadTokens?: number
+  readonly cacheWriteTokens?: number
+}
+
+export interface ContextPressureProjectionLike {
+  readonly pressureTokens?: number
+  readonly contextWindow?: number
+}
+
+export interface ProjectionSnapshotLike {
+  readonly values: {
+    readonly tokenUsage?: TokenUsageProjectionLike
+    readonly contextPressure?: ContextPressureProjectionLike
+  }
+}
+
+export interface SessionProjectionsLike {
+  snapshot(session: object): ProjectionSnapshotLike
+}
+
 export interface BridgeDeps {
   readonly agents: { get(sessionId: string): AgentLike | undefined }
   readonly llm?: LlmLike
   /** cordis-plugin-loader entry tree for knowme/listPlugins; absent → empty plugin list. */
   readonly loader?: LoaderLike
+  /** cordis token-meter projections for knowme/sessionStats; absent → empty snapshot. */
+  readonly sessionProjections?: SessionProjectionsLike
   readonly notify: (method: string, params: object) => void
   readonly installModelSelection?: ModelSelectionInstaller
   readonly logger?: { warn(message: string): void }
@@ -364,6 +390,35 @@ export function createBridge(deps: BridgeDeps): Bridge {
     return { entries }
   }
 
+  async function sessionStats(params: Record<string, unknown> | undefined): Promise<DshSessionStats> {
+    const sessionId = requireString(params, BRIDGE_METHODS.sessionStats, 'sessionId')
+    const empty: DshSessionStats = { inputTokens: 0, outputTokens: 0 }
+    const projections = deps.sessionProjections
+    const agent = deps.agents.get(sessionId)
+    if (projections === undefined || agent === undefined) return empty
+
+    const { tokenUsage, contextPressure } = projections.snapshot(agent.session).values
+    const stats: {
+      inputTokens: number
+      outputTokens: number
+      cacheReadTokens?: number
+      cacheWriteTokens?: number
+      contextPressure?: { tokens: number; window?: number }
+    } = {
+      inputTokens: tokenUsage?.uncachedInputTokens ?? 0,
+      outputTokens: tokenUsage?.outputTokens ?? 0,
+    }
+    if (tokenUsage?.cacheReadTokens !== undefined) stats.cacheReadTokens = tokenUsage.cacheReadTokens
+    if (tokenUsage?.cacheWriteTokens !== undefined) stats.cacheWriteTokens = tokenUsage.cacheWriteTokens
+    if (contextPressure?.pressureTokens !== undefined) {
+      stats.contextPressure = {
+        tokens: contextPressure.pressureTokens,
+        ...(contextPressure.contextWindow === undefined ? {} : { window: contextPressure.contextWindow }),
+      }
+    }
+    return stats
+  }
+
   const approvalAsk: ApprovalAskListener = (req, next) => {
     // Microtask-race guard (api-proxy.ts:1396): an abort that landed before
     // this listener ran must never register a never-firing listener.
@@ -443,6 +498,8 @@ export function createBridge(deps: BridgeDeps): Bridge {
           return questionRespond(params)
         case BRIDGE_METHODS.listPlugins:
           return listPlugins()
+        case BRIDGE_METHODS.sessionStats:
+          return sessionStats(params)
         default:
           throw new Error(`unknown knowme-dsh-bridge method: ${method}`)
       }

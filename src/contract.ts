@@ -29,6 +29,7 @@ export const REQUIRED_SERVICES = [
   'approval', // approval/request waterfall + audit events for knowme/approval-respond
   'userQuestions', // ask-user provider for knowme/question-respond
   'loader', // cordis-plugin-loader entry tree for knowme/listPlugins (soft-probed; absent → empty list)
+  'sessionProjections', // per-session token/context telemetry for knowme/sessionStats (soft-probed; absent → empty snapshot)
 ] as const
 
 export type RequiredService = (typeof REQUIRED_SERVICES)[number]
@@ -39,6 +40,7 @@ export const BRIDGE_METHODS = {
   approvalRespond: 'knowme/approval-respond',
   questionRespond: 'knowme/question-respond',
   listPlugins: 'knowme/listPlugins',
+  sessionStats: 'knowme/sessionStats',
 } as const
 
 /** Notification method names this bridge pushes to the out-of-process client. */
@@ -95,4 +97,49 @@ export interface PluginInventoryItem {
   readonly enabled: boolean
   /** Root fiber phase, or null when disposed. */
   readonly fiberPhase: PluginFiberPhase
+}
+
+/**
+ * Normalized per-session telemetry snapshot for `knowme/sessionStats`, read
+ * in-process from dsh's `sessionProjections` (the cordis token-meter
+ * projections composed in dsh-base). Field-identical to the KnowMe-side
+ * `DshSessionStats` (no shared package — the two declarations are kept in sync
+ * by a drift guard + post-impl mirror review).
+ *
+ * DELIVERED this change (token-meter-derived, always present as numbers):
+ * `inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens`, and
+ * `contextPressure` WHEN the session has produced provider usage.
+ *
+ * RESERVED-OPTIONAL (session-stats-derived; `@deepseek-ai/dsh-session-stats` is
+ * NOT composed in the knowme-sdk profile, so these are ABSENT this change — the
+ * fields exist so composing session-stats later is zero-rework): turns, steps,
+ * timing, throughput, cache-hit ratio.
+ */
+export interface DshSessionStats {
+  /** Cumulative uncached input tokens (mapped from `tokenUsage.uncachedInputTokens`). */
+  readonly inputTokens: number
+  /** Cumulative output tokens (from `tokenUsage.outputTokens`). */
+  readonly outputTokens: number
+  /** Cumulative cache-read tokens, when the projection carries them. */
+  readonly cacheReadTokens?: number
+  /** Cumulative cache-write tokens, when the projection carries them. */
+  readonly cacheWriteTokens?: number
+  /**
+   * Context-window occupancy. PRESENT iff the session produced provider usage
+   * (dsh `ContextPressureProjection.pressureTokens` is set). `undefined`
+   * distinguishes "runtime not started / no data" from a real "0 tokens".
+   */
+  readonly contextPressure?: {
+    /** Prompt size of the most recent request (`pressureTokens`). */
+    readonly tokens: number
+    /** Model context window (`contextWindow`), when the adapter advertised one. */
+    readonly window?: number
+  }
+  readonly turns?: number
+  readonly steps?: number
+  readonly llmMs?: number
+  readonly toolMs?: number
+  readonly firstTokenMs?: number
+  readonly tokPerSec?: number
+  readonly cacheHitRatio?: number
 }

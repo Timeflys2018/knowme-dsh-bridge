@@ -82,6 +82,9 @@
 - id: tool-fs
   name: '@deepseek-ai/dsh-tool-fs'
 
+- id: session-projection
+  name: '@deepseek-ai/dsh-session-projection'
+
 - id: token-meter
   name: '@deepseek-ai/dsh-token-meter'
 

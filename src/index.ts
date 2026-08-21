@@ -31,6 +31,7 @@ import {
   type LoaderLike,
   type ModelSelectionInstaller,
   type QuestionProviderLike,
+  type SessionProjectionsLike,
 } from './bridge.js'
 import { resolvePromptAgent, type AgentOptionsLike, type SessionLifecycleDeps } from './session-lifecycle.js'
 
@@ -39,9 +40,10 @@ export type {
   AgentLike, ApprovalAskListener, ApprovalRequestLike, Bridge, BridgeDeps, LlmLike,
   LoaderLike, LoaderEntryLike,
   ModelSelectionInstaller, ModelSelectionRefLike, QuestionProviderLike, QuestionRequestLike,
+  SessionProjectionsLike, ProjectionSnapshotLike, TokenUsageProjectionLike, ContextPressureProjectionLike,
 } from './bridge.js'
 export { BRIDGE_METHODS, BRIDGE_NOTIFICATIONS, ERROR_NAMES, REQUIRED_SERVICES, PINNED_DSH_VERSION } from './contract.js'
-export type { PluginFiberPhase, PluginInventoryItem } from './contract.js'
+export type { PluginFiberPhase, PluginInventoryItem, DshSessionStats } from './contract.js'
 
 /** Stable cordis plugin name (referenced from cordis.yml). */
 export const name = 'knowme-sdk-bridge'
@@ -87,10 +89,12 @@ export function apply(ctx: BridgePluginContext, config: JsonRpcConfig): void {
   // Soft-probe the cordis loader (present in every booted profile) for knowme/listPlugins;
   // absent → the bridge degrades that method to an empty list (see bridge.ts listPlugins).
   const loader = ctx.get('loader') as LoaderLike | undefined
+  const sessionProjections = ctx.get('sessionProjections') as SessionProjectionsLike | undefined
   const bridge = createBridge({
     agents: ctx.agents as { get(sessionId: string): AgentLike | undefined },
     ...(llm === undefined ? {} : { llm }),
     ...(loader === undefined ? {} : { loader }),
+    ...(sessionProjections === undefined ? {} : { sessionProjections }),
     notify: (method, params) => { transport.notify(method, params) },
     installModelSelection: installRealSelection,
     logger: ctx.logger,
