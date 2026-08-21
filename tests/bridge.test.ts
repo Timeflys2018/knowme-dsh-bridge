@@ -231,7 +231,7 @@ describe('knowme/permission.get + set — permission-presets exposure', () => {
     const calls: string[] = []
     const p = presets({ set: (_s, name) => { calls.push(`set:${name}`) } })
     const approvalService: ApprovalServiceLike = { setPolicy: (_a, policy) => { calls.push(`setPolicy:${policy}`) } }
-    const h = fakeBridgeDeps({ sessionProjections: projections('workspace-write'), permissionPresets: p, approvalService })
+    const h = fakeBridgeDeps({ sessionProjections: projections('workspace-write'), resolvePermissionPresets: () => p, resolveApprovalService: () => approvalService })
     h.makeAgent('s1')
     const bridge = createBridge(h.deps)
     const r = await bridge.handleRequest(BRIDGE_METHODS.permissionSet, { sessionId: 's1', preset: 'read-only' })
@@ -241,7 +241,7 @@ describe('knowme/permission.get + set — permission-presets exposure', () => {
   })
 
   it('set rejects custom and unknown presets with unknown-preset', async () => {
-    const h = fakeBridgeDeps({ sessionProjections: projections('workspace-write'), permissionPresets: presets() })
+    const h = fakeBridgeDeps({ sessionProjections: projections('workspace-write'), resolvePermissionPresets: () => presets() })
     h.makeAgent('s1')
     const bridge = createBridge(h.deps)
     await expect(bridge.handleRequest(BRIDGE_METHODS.permissionSet, { sessionId: 's1', preset: 'custom' })).rejects.toThrow(/unknown-preset/)
@@ -257,20 +257,39 @@ describe('knowme/permission.get + set — permission-presets exposure', () => {
 
   it('set maps the terminal-fence throw to permission-locked, other throws to permission-write-failed', async () => {
     const locked = presets({ set: () => { throw new Error('cannot change sandbox mode from "danger-full-access" to "read-only" while persistent terminal sessions are open') } })
-    const h1 = fakeBridgeDeps({ sessionProjections: projections('danger-full-access'), permissionPresets: locked })
+    const h1 = fakeBridgeDeps({ sessionProjections: projections('danger-full-access'), resolvePermissionPresets: () => locked })
     h1.makeAgent('s1')
     await expect(createBridge(h1.deps).handleRequest(BRIDGE_METHODS.permissionSet, { sessionId: 's1', preset: 'read-only' })).rejects.toThrow(/permission-locked/)
 
     const other = presets({ set: () => { throw new Error('disk full') } })
-    const h2 = fakeBridgeDeps({ sessionProjections: projections('workspace-write'), permissionPresets: other })
+    const h2 = fakeBridgeDeps({ sessionProjections: projections('workspace-write'), resolvePermissionPresets: () => other })
     h2.makeAgent('s2')
     await expect(createBridge(h2.deps).handleRequest(BRIDGE_METHODS.permissionSet, { sessionId: 's2', preset: 'read-only' })).rejects.toThrow(/permission-write-failed/)
+  })
+
+  it('set resolves the presets service LAZILY per call — absent at construction, present at call-time → succeeds', async () => {
+    // Regression (CDP: permission-unavailable in the bundled profile): the presets fiber is not ACTIVE
+    // when the bridge is constructed, so a construction-time cache reads undefined. A per-call resolver
+    // that returns undefined first (construction) then the live service (call-time) MUST still switch.
+    const calls: string[] = []
+    const p = presets({ set: (_s, name) => { calls.push(`set:${name}`) } })
+    let active = false
+    const h = fakeBridgeDeps({
+      sessionProjections: projections('workspace-write'),
+      resolvePermissionPresets: () => (active ? p : undefined),
+    })
+    h.makeAgent('s1')
+    const bridge = createBridge(h.deps)
+    active = true
+    const r = await bridge.handleRequest(BRIDGE_METHODS.permissionSet, { sessionId: 's1', preset: 'read-only' })
+    expect(r).toEqual({ resolved: true })
+    expect(calls).toEqual(['set:read-only'])
   })
 
   it('set without an approval service falls back to presets.set alone (no setPolicy, still resolves)', async () => {
     const calls: string[] = []
     const p = presets({ set: (_s, name) => { calls.push(`set:${name}`) } })
-    const h = fakeBridgeDeps({ sessionProjections: projections('workspace-write'), permissionPresets: p })
+    const h = fakeBridgeDeps({ sessionProjections: projections('workspace-write'), resolvePermissionPresets: () => p })
     h.makeAgent('s1')
     const bridge = createBridge(h.deps)
     const r = await bridge.handleRequest(BRIDGE_METHODS.permissionSet, { sessionId: 's1', preset: 'read-only' })

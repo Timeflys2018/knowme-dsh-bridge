@@ -164,10 +164,10 @@ export interface BridgeDeps {
   readonly loader?: LoaderLike
   /** cordis token-meter projections for knowme/sessionStats; absent → empty snapshot. */
   readonly sessionProjections?: SessionProjectionsLike
-  /** dsh permission-presets service for knowme/permission.set; absent → permission-unavailable. */
-  readonly permissionPresets?: PermissionPresetsLike
-  /** dsh approval service for the notice-injecting policy write; absent → set() alone (no notice). */
-  readonly approvalService?: ApprovalServiceLike
+  /** Late-resolve the permission-presets service per knowme/permission.set call (its fiber is not ACTIVE at apply() time); undefined → permission-unavailable. */
+  readonly resolvePermissionPresets?: () => PermissionPresetsLike | undefined
+  /** Late-resolve the approval service for the notice-injecting policy write; undefined → set() alone (no notice). */
+  readonly resolveApprovalService?: () => ApprovalServiceLike | undefined
   readonly notify: (method: string, params: object) => void
   readonly installModelSelection?: ModelSelectionInstaller
   readonly logger?: { warn(message: string): void }
@@ -495,7 +495,7 @@ export function createBridge(deps: BridgeDeps): Bridge {
     if (preset === 'custom') throw new Error(`${ERROR_NAMES.unknownPreset}: 'custom' is not a settable preset`)
     const agent = deps.agents.get(sessionId)
     if (agent === undefined) throw new Error(`${ERROR_NAMES.sessionNotFound}: ${sessionId}`)
-    const presets = deps.permissionPresets
+    const presets = deps.resolvePermissionPresets?.()
     if (presets === undefined) throw new Error(`${ERROR_NAMES.permissionUnavailable}: ${method} requires the permissionPresets service`)
 
     let spec: { sandbox: string; approval: string }
@@ -509,7 +509,7 @@ export function createBridge(deps: BridgeDeps): Bridge {
     // internal apply() then sees the approval already == spec.approval and skips the raw (notice-less)
     // write, still emitting the preset + sandbox/mode events. Absent approval service → set() alone.
     try {
-      deps.approvalService?.setPolicy(agent, spec.approval)
+      deps.resolveApprovalService?.()?.setPolicy(agent, spec.approval)
       presets.set(agent.session, preset)
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
