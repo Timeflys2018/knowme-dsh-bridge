@@ -31,6 +31,7 @@ export const REQUIRED_SERVICES = [
   'loader', // cordis-plugin-loader entry tree for knowme/listPlugins (soft-probed; absent → empty list)
   'sessionProjections', // per-session token/context telemetry for knowme/sessionStats (soft-probed; absent → empty snapshot)
   'permissionPresets', // sandbox/approval preset get/set for knowme/permission.* (soft-probed; absent → permission-unavailable / empty)
+  'commands', // slash-command list/execute for knowme/commands.* (soft-probed, resolved lazily per call; absent → commands-unavailable / empty)
 ] as const
 
 export type RequiredService = (typeof REQUIRED_SERVICES)[number]
@@ -44,6 +45,8 @@ export const BRIDGE_METHODS = {
   sessionStats: 'knowme/sessionStats',
   permissionGet: 'knowme/permission.get',
   permissionSet: 'knowme/permission.set',
+  commandsList: 'knowme/commands.list',
+  commandsExecute: 'knowme/commands.execute',
 } as const
 
 /** Notification method names this bridge pushes to the out-of-process client. */
@@ -68,6 +71,9 @@ export const ERROR_NAMES = {
   unknownPreset: 'unknown-preset',
   permissionLocked: 'permission-locked',
   permissionWriteFailed: 'permission-write-failed',
+  commandsUnavailable: 'commands-unavailable',
+  unknownCommand: 'unknown-command',
+  commandFailed: 'command-failed',
 } as const
 
 /**
@@ -162,4 +168,26 @@ export interface DshSessionStats {
 export interface DshPermission {
   readonly preset: string | null
   readonly options: readonly { readonly value: string; readonly name: string; readonly description?: string }[]
+}
+
+/**
+ * One dsh slash command for `knowme/commands.list`, projected from a
+ * `CommandDescriptor`. `input` is present when the command takes an argument
+ * (its `hint` is the placeholder; `images` whether it accepts attachments).
+ */
+export interface DshCommand {
+  readonly name: string
+  readonly description: string
+  readonly input?: { readonly hint: string; readonly images?: boolean }
+}
+
+/**
+ * The result of `knowme/commands.execute` — the dsh `CommandExecution` verbatim.
+ * `result.text` is the ONLY user-visible output (a dsh command is log-only: it
+ * writes command/run+command/done session events but runs no turn, so nothing
+ * is mirrored into the KnowMe transcript). `commandId` is the dsh command id.
+ */
+export interface DshCommandExecution {
+  readonly commandId: string
+  readonly result: { readonly kind: 'success'; readonly text?: string } | { readonly kind: 'error'; readonly text: string }
 }

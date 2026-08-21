@@ -22,6 +22,8 @@ import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval'
 import {
   BRIDGE_METHODS,
   BRIDGE_NOTIFICATIONS,
+  type DshCommand,
+  type DshCommandExecution,
   type DshPermission,
   type DshSessionStats,
   ERROR_NAMES,
@@ -157,6 +159,17 @@ export interface ApprovalServiceLike {
   setPolicy(agent: object, policy: string): void
 }
 
+/** dsh commands service surface for knowme/commands.* (structural; no runtime dsh import). */
+export interface CommandsServiceLike {
+  list(agent: object): readonly { name: string; description: string; input?: { hint: string; images?: boolean } }[]
+  execute(
+    agent: object,
+    line: string,
+    images: readonly unknown[],
+    signal: AbortSignal,
+  ): Promise<{ commandId: string; result: { kind: string; text?: string } } | undefined>
+}
+
 export interface BridgeDeps {
   readonly agents: { get(sessionId: string): AgentLike | undefined }
   readonly llm?: LlmLike
@@ -168,6 +181,8 @@ export interface BridgeDeps {
   readonly resolvePermissionPresets?: () => PermissionPresetsLike | undefined
   /** Late-resolve the approval service for the notice-injecting policy write; undefined → set() alone (no notice). */
   readonly resolveApprovalService?: () => ApprovalServiceLike | undefined
+  /** Late-resolve the commands service per knowme/commands.* call (its fiber is not ACTIVE at apply() time); undefined → commands-unavailable / empty. */
+  readonly resolveCommands?: () => CommandsServiceLike | undefined
   readonly notify: (method: string, params: object) => void
   readonly installModelSelection?: ModelSelectionInstaller
   readonly logger?: { warn(message: string): void }
@@ -519,6 +534,45 @@ export function createBridge(deps: BridgeDeps): Bridge {
     return { resolved: true }
   }
 
+  async function commandsList(params: Record<string, unknown> | undefined): Promise<{ commands: readonly DshCommand[] }> {
+    const sessionId = requireString(params, BRIDGE_METHODS.commandsList, 'sessionId')
+    const agent = deps.agents.get(sessionId)
+    const commands = deps.resolveCommands?.()
+    if (agent === undefined || commands === undefined) return { commands: [] }
+    return {
+      commands: commands.list(agent).map((c) => ({
+        name: c.name,
+        description: c.description,
+        ...(c.input === undefined ? {} : { input: { hint: c.input.hint, ...(c.input.images === undefined ? {} : { images: c.input.images }) } }),
+      })),
+    }
+  }
+
+  async function commandsExecute(params: Record<string, unknown> | undefined): Promise<DshCommandExecution> {
+    const method = BRIDGE_METHODS.commandsExecute
+    const sessionId = requireString(params, method, 'sessionId')
+    const line = requireString(params, method, 'line')
+    const agent = deps.agents.get(sessionId)
+    if (agent === undefined) throw new Error(`${ERROR_NAMES.sessionNotFound}: ${sessionId}`)
+    const commands = deps.resolveCommands?.()
+    if (commands === undefined) throw new Error(`${ERROR_NAMES.commandsUnavailable}: ${method} requires the commands service`)
+    // Hold the AbortController for the whole await so it is not GC'd mid-call (dsh's execute observes the
+    // signal and throws on abort). No cancellation surface in v1 — the signal is never fired.
+    const ac = new AbortController()
+    let exec: { commandId: string; result: { kind: string; text?: string } } | undefined
+    try {
+      exec = await commands.execute(agent, line, [], ac.signal)
+    } catch (error) {
+      throw new Error(`${ERROR_NAMES.commandFailed}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (exec === undefined) throw new Error(`${ERROR_NAMES.unknownCommand}: ${line}`)
+    const result =
+      exec.result.kind === 'error'
+        ? { kind: 'error' as const, text: exec.result.text ?? '' }
+        : { kind: 'success' as const, ...(exec.result.text === undefined ? {} : { text: exec.result.text }) }
+    return { commandId: exec.commandId, result }
+  }
+
   const approvalAsk: ApprovalAskListener = (req, next) => {
     // Microtask-race guard (api-proxy.ts:1396): an abort that landed before
     // this listener ran must never register a never-firing listener.
@@ -602,6 +656,10 @@ export function createBridge(deps: BridgeDeps): Bridge {
           return sessionStats(params)
         case BRIDGE_METHODS.permissionGet:
           return permissionGet(params)
+        case BRIDGE_METHODS.commandsList:
+          return commandsList(params)
+        case BRIDGE_METHODS.commandsExecute:
+          return commandsExecute(params)
         case BRIDGE_METHODS.permissionSet:
           return permissionSet(params)
         default:

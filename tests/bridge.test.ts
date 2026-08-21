@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { createBridge, type LoaderEntryLike, type SessionProjectionsLike, type PermissionPresetsLike, type ApprovalServiceLike } from '../src/bridge.js'
-import { BRIDGE_METHODS, type DshSessionStats, type DshPermission } from '../src/contract.js'
+import { createBridge, type LoaderEntryLike, type SessionProjectionsLike, type PermissionPresetsLike, type ApprovalServiceLike, type CommandsServiceLike } from '../src/bridge.js'
+import { BRIDGE_METHODS, type DshSessionStats, type DshPermission, type DshCommand, type DshCommandExecution } from '../src/contract.js'
 import { fakeBridgeDeps } from './helpers.js'
 
 describe('knowme-dsh-bridge routing contract', () => {
@@ -295,5 +295,100 @@ describe('knowme/permission.get + set — permission-presets exposure', () => {
     const r = await bridge.handleRequest(BRIDGE_METHODS.permissionSet, { sessionId: 's1', preset: 'read-only' })
     expect(r).toEqual({ resolved: true })
     expect(calls).toEqual(['set:read-only'])
+  })
+})
+
+describe('knowme/commands.list + execute — dsh slash commands', () => {
+  function commandsService(over: Partial<CommandsServiceLike> = {}): CommandsServiceLike {
+    return {
+      list: () => [
+        { name: 'compact', description: 'Compact the context' },
+        { name: 'goal', description: 'Set a goal', input: { hint: 'the goal', images: false } },
+      ],
+      execute: async (_a, line) => {
+        if (line === '/compact') return { commandId: 'cmd-1', result: { kind: 'success', text: 'compacted' } }
+        return undefined
+      },
+      ...over,
+    }
+  }
+
+  it('list maps the descriptors to {name, description, input?}', async () => {
+    const h = fakeBridgeDeps({ resolveCommands: () => commandsService() })
+    h.makeAgent('s1')
+    const bridge = createBridge(h.deps)
+    const r = (await bridge.handleRequest(BRIDGE_METHODS.commandsList, { sessionId: 's1' })) as { commands: readonly DshCommand[] }
+    expect(r.commands).toEqual([
+      { name: 'compact', description: 'Compact the context' },
+      { name: 'goal', description: 'Set a goal', input: { hint: 'the goal', images: false } },
+    ])
+  })
+
+  it('list degrades to empty when the commands service or agent is absent', async () => {
+    const noSvc = fakeBridgeDeps()
+    noSvc.makeAgent('s1')
+    expect(await createBridge(noSvc.deps).handleRequest(BRIDGE_METHODS.commandsList, { sessionId: 's1' })).toEqual({ commands: [] })
+
+    const noAgent = fakeBridgeDeps({ resolveCommands: () => commandsService() })
+    expect(await createBridge(noAgent.deps).handleRequest(BRIDGE_METHODS.commandsList, { sessionId: 'ghost' })).toEqual({ commands: [] })
+  })
+
+  it('execute runs the raw line and returns the CommandExecution verbatim', async () => {
+    const h = fakeBridgeDeps({ resolveCommands: () => commandsService() })
+    h.makeAgent('s1')
+    const bridge = createBridge(h.deps)
+    const r = (await bridge.handleRequest(BRIDGE_METHODS.commandsExecute, { sessionId: 's1', line: '/compact' })) as DshCommandExecution
+    expect(r).toEqual({ commandId: 'cmd-1', result: { kind: 'success', text: 'compacted' } })
+  })
+
+  it('execute passes the raw line + empty images + a live signal to the service', async () => {
+    const seen: { line?: string; images?: unknown; hasSignal?: boolean } = {}
+    const svc = commandsService({
+      execute: async (_a, line, images, signal) => {
+        seen.line = line
+        seen.images = images
+        seen.hasSignal = typeof (signal as AbortSignal).aborted === 'boolean'
+        return { commandId: 'c', result: { kind: 'success' } }
+      },
+    })
+    const h = fakeBridgeDeps({ resolveCommands: () => svc })
+    h.makeAgent('s1')
+    await createBridge(h.deps).handleRequest(BRIDGE_METHODS.commandsExecute, { sessionId: 's1', line: '/compact' })
+    expect(seen).toEqual({ line: '/compact', images: [], hasSignal: true })
+  })
+
+  it('execute rejects unknown-command when the service returns undefined', async () => {
+    const h = fakeBridgeDeps({ resolveCommands: () => commandsService() })
+    h.makeAgent('s1')
+    await expect(createBridge(h.deps).handleRequest(BRIDGE_METHODS.commandsExecute, { sessionId: 's1', line: '/nope' })).rejects.toThrow(/unknown-command/)
+  })
+
+  it('execute rejects commands-unavailable when the service is absent, session-not-found for an unknown session', async () => {
+    const noSvc = fakeBridgeDeps()
+    noSvc.makeAgent('s1')
+    await expect(createBridge(noSvc.deps).handleRequest(BRIDGE_METHODS.commandsExecute, { sessionId: 's1', line: '/compact' })).rejects.toThrow(/commands-unavailable/)
+
+    const h = fakeBridgeDeps({ resolveCommands: () => commandsService() })
+    await expect(createBridge(h.deps).handleRequest(BRIDGE_METHODS.commandsExecute, { sessionId: 'ghost', line: '/compact' })).rejects.toThrow(/session-not-found/)
+  })
+
+  it('execute maps a handler throw to command-failed (message preserved)', async () => {
+    const svc = commandsService({ execute: async () => { throw new Error('disk full') } })
+    const h = fakeBridgeDeps({ resolveCommands: () => svc })
+    h.makeAgent('s1')
+    await expect(createBridge(h.deps).handleRequest(BRIDGE_METHODS.commandsExecute, { sessionId: 's1', line: '/compact' })).rejects.toThrow(/command-failed: disk full/)
+  })
+
+  it('resolves the commands service LAZILY — absent at construction, live at call → succeeds', async () => {
+    // Regression (Change 2 CDP fiber-timing): the commands fiber is not ACTIVE when the bridge is
+    // constructed. A per-call resolver that returns undefined first then the live service MUST work.
+    let active = false
+    const svc = commandsService()
+    const h = fakeBridgeDeps({ resolveCommands: () => (active ? svc : undefined) })
+    h.makeAgent('s1')
+    const bridge = createBridge(h.deps)
+    active = true
+    const r = (await bridge.handleRequest(BRIDGE_METHODS.commandsExecute, { sessionId: 's1', line: '/compact' })) as DshCommandExecution
+    expect(r.result.kind).toBe('success')
   })
 })

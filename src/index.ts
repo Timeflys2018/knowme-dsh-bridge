@@ -31,6 +31,7 @@ import {
   type LoaderLike,
   type PermissionPresetsLike,
   type ApprovalServiceLike,
+  type CommandsServiceLike,
   type ModelSelectionInstaller,
   type QuestionProviderLike,
   type SessionProjectionsLike,
@@ -45,7 +46,7 @@ export type {
   SessionProjectionsLike, ProjectionSnapshotLike, TokenUsageProjectionLike, ContextPressureProjectionLike,
 } from './bridge.js'
 export { BRIDGE_METHODS, BRIDGE_NOTIFICATIONS, ERROR_NAMES, REQUIRED_SERVICES, PINNED_DSH_VERSION } from './contract.js'
-export type { PluginFiberPhase, PluginInventoryItem, DshSessionStats } from './contract.js'
+export type { PluginFiberPhase, PluginInventoryItem, DshSessionStats, DshPermission, DshCommand, DshCommandExecution } from './contract.js'
 
 /** Stable cordis plugin name (referenced from cordis.yml). */
 export const name = 'knowme-sdk-bridge'
@@ -103,6 +104,7 @@ export function apply(ctx: BridgePluginContext, config: JsonRpcConfig): void {
     ...(sessionProjections === undefined ? {} : { sessionProjections }),
     resolvePermissionPresets: () => ctx.get('permissionPresets') as PermissionPresetsLike | undefined,
     resolveApprovalService: () => ctx.get('approval') as ApprovalServiceLike | undefined,
+    resolveCommands: () => ctx.get('commands') as CommandsServiceLike | undefined,
     notify: (method, params) => { transport.notify(method, params) },
     installModelSelection: installRealSelection,
     logger: ctx.logger,

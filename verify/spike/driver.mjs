@@ -432,6 +432,46 @@ await tier('T6b preset survives resume-across-recycle', async (run) => {
   if ((await run2.exitPromise) !== 0) throw new Error('t6b process-2 non-zero exit')
 })
 
+await tier('T7 commands list + execute', async (run) => {
+  await run.request('initialize', { cwd: run.dir, provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+  await run.request('session/prompt', { sessionId: 't7', contentBlocks: [{ type: 'text', text: 'boot so an agent exists' }] })
+  await run.waitFor(turnEnd('t7'), 'turn/end for t7')
+
+  const listed = await run.request('knowme/commands.list', { sessionId: 't7' })
+  if (listed.error !== undefined) throw new Error(`commands.list errored: ${JSON.stringify(listed.error)}`)
+  const cmds = listed.result?.commands ?? []
+  if (!Array.isArray(cmds) || cmds.length === 0) throw new Error(`commands.list returned no commands (commands service not composed?): ${JSON.stringify(listed.result)}`)
+  for (const c of cmds) {
+    if (typeof c.name !== 'string' || typeof c.description !== 'string') throw new Error(`command entry missing name/description: ${JSON.stringify(c)}`)
+  }
+  const names = cmds.map((c) => c.name)
+  if (!names.includes('compact')) throw new Error(`expected '/compact' in the command list: [${names.join(', ')}]`)
+  ok(`commands.list → [${names.join(', ')}]`)
+  // Empirical record for design D4a: does /compact yield user-visible result.text? (informational — the
+  // ack-summary surfacing is grounded on this, not assumed). Also note /feedback //goal behavior for D9.
+  const feedbackGoal = cmds.filter((c) => c.name === 'feedback' || c.name === 'goal').map((c) => `${c.name}${c.input ? '(needs-arg)' : ''}`)
+  if (feedbackGoal.length > 0) ok(`D9 note — feedback/goal: [${feedbackGoal.join(', ')}]`)
+
+  const exec = await run.request('knowme/commands.execute', { sessionId: 't7', line: '/compact' })
+  if (exec.error !== undefined) throw new Error(`commands.execute('/compact') errored: ${JSON.stringify(exec.error)}`)
+  const res = exec.result
+  if (res === undefined || typeof res.commandId !== 'string' || res.result === undefined || typeof res.result.kind !== 'string') {
+    throw new Error(`commands.execute did not return a {commandId, result:{kind}}: ${JSON.stringify(exec.result)}`)
+  }
+  if (res.result.kind !== 'success' && res.result.kind !== 'error') throw new Error(`unexpected result kind: ${JSON.stringify(res.result)}`)
+  ok(`commands.execute('/compact') → {kind:${res.result.kind}, text:${res.result.text !== undefined ? JSON.stringify(res.result.text).slice(0, 40) : '—'}}`)
+
+  const unknown = await run.request('knowme/commands.execute', { sessionId: 't7', line: '/notacommand' })
+  if (unknown.error === undefined || !/unknown-command/.test(JSON.stringify(unknown.error))) {
+    throw new Error(`execute('/notacommand') should reject unknown-command: ${JSON.stringify(unknown)}`)
+  }
+  ok("commands.execute('/notacommand') → unknown-command")
+
+  const sd = await run.request('shutdown', {})
+  if (sd.result === undefined) throw new Error('T7 shutdown failed')
+  if ((await run.exitPromise) !== 0) throw new Error('T7 non-zero exit')
+})
+
 // NOTE — W2 torn-log ("resume-fails → clean error, never silent fresh-create") is NOT spiked here.
 // Empirically (persistence-jsonl rc.8) dsh's loader is corruption-TOLERANT at every layer the resolver
 // touches: a corrupt HEADER is silently EXCLUDED from list() (parseHeaderMeta returns undefined → the
@@ -448,4 +488,4 @@ if (failures.length > 0) {
   console.error(`[verify:spike] FAILED: ${failures.join(', ')} (run root: ${RUN_ROOT})`)
   process.exit(1)
 }
-console.log('[verify:spike] OK — T1 T2 T3 T3b T4 T5 T6 T6b all passed')
+console.log('[verify:spike] OK — T1 T2 T3 T3b T4 T5 T6 T6b T7 all passed')

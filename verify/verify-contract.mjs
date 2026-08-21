@@ -195,6 +195,26 @@ console.log('\n[12] permission-presets service surfaces (knowme/permission.get +
   }
 }
 
+console.log('\n[13] commands service surfaces (knowme/commands.list + execute)')
+{
+  const profileNm = join(homedir(), '.dsh', 'profiles', 'node_modules', '@deepseek-ai')
+  const cmdPath = join(profileNm, 'dsh-commands', 'src', 'index.ts')
+  const typesPath = join(profileNm, 'dsh-commands', 'src', 'types.ts')
+  if (!existsSync(cmdPath)) {
+    console.log('  ⚠ skipped — dsh profile not installed (verify:spike pins this against the live runtime)')
+  } else {
+    const src = readFileSync(cmdPath, 'utf8')
+    const types = existsSync(typesPath) ? readFileSync(typesPath, 'utf8') : ''
+    check(/super\(ctx,\s*'commands'\)/.test(src), "service registers as 'commands'")
+    check(/\blist\s*\(\s*agent\s*:\s*Agent\s*\)\s*:\s*readonly\s+CommandDescriptor\[\]/.test(src), 'public list(agent): readonly CommandDescriptor[] present')
+    check(/\bexecute\s*\(/.test(src) && /line\s*:\s*string/.test(src) && /signal\s*:\s*AbortSignal/.test(src), 'public execute(agent, line, images, signal) present')
+    check(/interface\s+CommandDescriptor\b/.test(types) && /\breadonly\s+name\s*:\s*string/.test(types) && /\breadonly\s+description\s*:\s*string/.test(types) && /\breadonly\s+input\?/.test(types), 'CommandDescriptor { name, description, input? } present')
+    check(/interface\s+CommandExecution\b/.test(types) && /\breadonly\s+commandId\b/.test(types) && /\breadonly\s+result\b/.test(types), 'CommandExecution { commandId, result } present')
+    const ver = require(join(profileNm, 'dsh-commands', 'package.json')).version
+    check(ver === PINNED, `@deepseek-ai/dsh-commands@${ver} === ${PINNED}`)
+  }
+}
+
 console.log('')
 if (failures.length > 0) {
   console.error(`[verify:contract] FAILED — ${failures.length} surface(s) drifted from the pinned contract:`)

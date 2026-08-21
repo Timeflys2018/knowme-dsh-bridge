@@ -6,6 +6,11 @@
   "scripts": {
     "drive": "node driver.mjs"
   },
+  "pnpm": {
+    "overrides": {
+      "@deepseek-ai/dsh-attachment": "0.1.0-rc.8"
+    }
+  },
   "dependencies": {
     "@deepseek-ai/dsh-app-boot": "0.1.0-rc.8",
     "@deepseek-ai/dsh-agent-spine-demo": "0.1.0-rc.8",
@@ -18,6 +23,9 @@
     "@deepseek-ai/dsh-sandbox-local": "0.1.0-rc.8",
     "@deepseek-ai/dsh-sandbox-policy": "0.1.0-rc.8",
     "@deepseek-ai/dsh-permission-presets": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-commands": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-command-compact": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-attachment": "0.1.0-rc.8",
     "@deepseek-ai/dsh-session-checkpoint-policy": "0.1.0-rc.8",
     "@deepseek-ai/dsh-session-persistence-jsonl": "0.1.0-rc.8",
     "@deepseek-ai/dsh-subagent": "0.1.0-rc.8",

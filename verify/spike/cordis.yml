@@ -133,6 +133,12 @@
 - id: user-questions
   name: '@deepseek-ai/dsh-user-questions'
 
+- id: commands
+  name: '@deepseek-ai/dsh-commands'
+
+- id: command-compact
+  name: '@deepseek-ai/dsh-command-compact'
+
 - id: spike-trigger
   name: '@knowme/spike-trigger'
 
