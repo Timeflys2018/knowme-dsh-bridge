@@ -487,6 +487,30 @@ await tier('T6c agentPreset get→set→get + lock + resume', async (run) => {
   if ((await run2.exitPromise) !== 0) throw new Error('T6c process-2 non-zero exit')
 }, { createBlankAgent: true })
 
+await tier('T6d-create-with-preset-and-permission', async (run) => {
+  await run.request('initialize', { cwd: run.dir, provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+  // A FRESH session's very first prompt carries the new-session dialog's choices — the create path must
+  // compose under 'minimal' AND constrain permission to 'read-only' before the first turn.
+  const first = await run.request('session/prompt', {
+    sessionId: 'nsd', agentPreset: 'minimal', permissionPreset: 'read-only',
+    contentBlocks: [{ type: 'text', text: 'created with a chosen mode + permission' }],
+  })
+  if (first.error !== undefined) throw new Error(`4b create prompt errored: ${JSON.stringify(first.error)}`)
+  await run.waitFor(turnEnd('nsd'), 'turn/end for the create-with-preset session')
+
+  const mode = await run.request('knowme/agentPreset.get', { sessionId: 'nsd' })
+  if (mode.result?.preset !== 'minimal') throw new Error(`4b: session did not compose 'minimal': ${JSON.stringify(mode)}`)
+  ok(`4b create composed agentPreset=${mode.result.preset}`)
+
+  const perm = await run.request('knowme/permission.get', { sessionId: 'nsd' })
+  if (perm.result?.preset !== 'read-only') throw new Error(`4b: permission not applied at create: ${JSON.stringify(perm)}`)
+  ok(`4b create constrained permission=${perm.result.preset}`)
+
+  const sd = await run.request('shutdown', {})
+  if (sd.result === undefined) throw new Error('T6d shutdown failed')
+  if ((await run.exitPromise) !== 0) throw new Error('T6d non-zero exit')
+}, { createBlankAgent: true })
+
 await tier('T7 commands list + execute', async (run) => {
   await run.request('initialize', { cwd: run.dir, provider: 'deepseek-official', model: 'deepseek-v4-flash' })
   await run.request('session/prompt', { sessionId: 't7', contentBlocks: [{ type: 'text', text: 'boot so an agent exists' }] })

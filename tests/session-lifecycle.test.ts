@@ -11,6 +11,7 @@ function makeAgent(id: string): { id: string; agent: { id: string; followup: Ret
 interface Fakes {
   deps: SessionLifecycleDeps
   created: string[]
+  createdMeta: Map<string, string | undefined>
   resumed: string[]
   setupCalls: Array<() => Promise<void>>
   mounted: string[]
@@ -20,6 +21,7 @@ interface Fakes {
 
 function makeFakes(over: Partial<{ inspectThrows: boolean; mountThrows: boolean; noAgentPresets: boolean }> = {}): Fakes {
   const created: string[] = []
+  const createdMeta = new Map<string, string | undefined>()
   const resumed: string[] = []
   const setupCalls: Array<() => Promise<void>> = []
   const mounted: string[] = []
@@ -28,9 +30,12 @@ function makeFakes(over: Partial<{ inspectThrows: boolean; mountThrows: boolean;
   const deps = {
     agents: {
       get: (id: string) => live.get(String(id))?.agent,
-      create: async (opts: { sessionId: unknown; meta: { cwd: string }; setup?: (agentCtx: object) => Promise<void> }) => {
+      create: async (opts: { sessionId: unknown; meta: { cwd: string; agentPreset?: string }; setup?: (agentCtx: object) => Promise<void> }) => {
         const id = String(opts.sessionId)
         created.push(id)
+        // Record the meta.agentPreset — dsh persists it on the session header (what getAgentPreset reads).
+        // The runtime bug this guards: composing via setup-mount alone reports 'standard' from get.
+        createdMeta.set(id, opts.meta.agentPreset)
         if (opts.setup !== undefined) setupCalls.push(() => opts.setup?.({}) ?? Promise.resolve())
         const a = makeAgent(id)
         live.set(id, a)
@@ -72,7 +77,7 @@ function makeFakes(over: Partial<{ inspectThrows: boolean; mountThrows: boolean;
           }),
         }),
   } as SessionLifecycleDeps
-  return { deps, created, resumed, setupCalls, mounted, live, persisted }
+  return { deps, created, createdMeta, resumed, setupCalls, mounted, live, persisted }
 }
 
 const OPTS = { provider: 'mify', model: 'zhipuai/glm-5.2' as string }
@@ -81,8 +86,9 @@ describe('resolvePromptAgent — three-state session gate (mirror apiproxy)', ()
   it('attached (live agent) → reuse, no create/resume', async () => {
     const f = makeFakes()
     f.live.set('s1', makeAgent('s1'))
-    const agent = await resolvePromptAgent(f.deps, { sessionId: 's1', cwd: '/proj', agentOptions: OPTS })
+    const { agent, created } = await resolvePromptAgent(f.deps, { sessionId: 's1', cwd: '/proj', agentOptions: OPTS })
     expect(agent.id).toBe('s1')
+    expect(created).toBe(false)
     expect(f.created).toEqual([])
     expect(f.resumed).toEqual([])
   })
@@ -190,7 +196,44 @@ describe('resolvePromptAgent — three-state session gate (mirror apiproxy)', ()
       resolvePromptAgent(f.deps, { sessionId: 's9', cwd: '/proj', agentOptions: OPTS }),
     ])
     expect(f.created).toEqual(['s9']) // exactly one create despite two concurrent callers
-    expect(a.id).toBe('s9')
-    expect(b.id).toBe('s9')
+    expect(a.agent.id).toBe('s9')
+    expect(b.agent.id).toBe('s9')
+    expect(a.created).toBe(true)
+  })
+
+  // Change 4b: the chosen mode composes the CREATE (via the header channel → resolveSessionPresetFromEvents).
+  it('create with agentPreset mounts that preset', async () => {
+    const f = makeFakes()
+    const { created } = await resolvePromptAgent(f.deps, { sessionId: 's-mode', cwd: '/proj', agentOptions: OPTS, agentPreset: 'minimal' })
+    expect(created).toBe(true)
+    // meta.agentPreset RECORDS it on the header (getAgentPreset reads this); setup MOUNTS it (runtime toolset).
+    expect(f.createdMeta.get('s-mode')).toBe('minimal')
+    await Promise.all(f.setupCalls.map((run) => run()))
+    expect(f.mounted).toEqual(['minimal'])
+  })
+
+  it('create without agentPreset mounts the default', async () => {
+    const f = makeFakes()
+    await resolvePromptAgent(f.deps, { sessionId: 's-def', cwd: '/proj', agentOptions: OPTS })
+    await Promise.all(f.setupCalls.map((run) => run()))
+    expect(f.mounted).toEqual(['standard'])
+  })
+
+  // A resumed session's stored preset wins — the prompt's agentPreset MUST NOT override it.
+  it('resume ignores the prompt agentPreset (stored preset wins)', async () => {
+    const f = makeFakes()
+    f.persisted.set('s-res', { meta: { id: 's-res', cwd: '/proj', agentPreset: 'code' } })
+    const { created } = await resolvePromptAgent(f.deps, { sessionId: 's-res', cwd: '/proj', agentOptions: OPTS, agentPreset: 'minimal' })
+    expect(created).toBe(false)
+    await Promise.all(f.setupCalls.map((run) => run()))
+    expect(f.mounted).toEqual(['code']) // stored 'code', NOT the prompt's 'minimal'
+  })
+
+  it('a live-agent reuse reports created:false', async () => {
+    const f = makeFakes()
+    f.live.set('s-live', makeAgent('s-live'))
+    const { created } = await resolvePromptAgent(f.deps, { sessionId: 's-live', cwd: '/proj', agentOptions: OPTS, agentPreset: 'minimal' })
+    expect(created).toBe(false)
+    expect(f.mounted).toEqual([]) // no create/mount for a live reuse
   })
 })

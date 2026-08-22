@@ -44,7 +44,7 @@ interface AgentPresetMountsLike {
 export interface SessionLifecycleDeps {
   readonly agents: {
     get: (id: unknown) => DshAgent | undefined
-    create: (opts: { sessionId: unknown; meta: { cwd: string }; agentOptions?: AgentOptionsLike } & AgentSetupOptionsLike) => Promise<AgentHandleLike>
+    create: (opts: { sessionId: unknown; meta: { cwd: string; agentPreset?: string }; agentOptions?: AgentOptionsLike } & AgentSetupOptionsLike) => Promise<AgentHandleLike>
     resume: (opts: { resumeSessionId: unknown; agentOptions?: AgentOptionsLike } & AgentSetupOptionsLike) => Promise<AgentHandleLike>
   }
   readonly sessions: { get: (id: unknown) => unknown }
@@ -65,18 +65,28 @@ export interface ResolvePromptInput {
   readonly cwd: string
   // undefined = initialize has not run yet (W1): the resolver must refuse rather than default.
   readonly agentOptions: AgentOptionsLike | undefined
+  // Change 4b: the mode chosen in the new-session dialog. Composed at CREATE only (recompose is
+  // blank-only, so this is the one legal window); a resume ignores it (its stored log preset wins).
+  readonly agentPreset?: string
+}
+
+// `created` lets the caller apply create-only side-effects (Change 4b: the chosen permission preset,
+// applied to a freshly created agent before its first followup) without re-touching a resumed/live one.
+export interface ResolvedAgentResult {
+  readonly agent: ResolvedAgent
+  readonly created: boolean
 }
 
 // Per-id in-flight create/resume so two concurrent prompts for the same session share ONE resolution
 // (W3/D6) — a second create/resume would double-register the agent and conflict.
-const inFlight = new Map<string, Promise<ResolvedAgent>>()
+const inFlight = new Map<string, Promise<ResolvedAgentResult>>()
 
-export function resolvePromptAgent(deps: SessionLifecycleDeps, input: ResolvePromptInput): Promise<ResolvedAgent> {
+export function resolvePromptAgent(deps: SessionLifecycleDeps, input: ResolvePromptInput): Promise<ResolvedAgentResult> {
   const { sessionId } = input
   // Attached-live check runs on EVERY call (W4): a disposed agent is no longer returned by agents.get,
   // so this both fast-paths reuse and avoids handing back a stale handle.
   const liveAgent = deps.agents.get(SessionId(sessionId))
-  if (liveAgent !== undefined) return Promise.resolve(liveAgent)
+  if (liveAgent !== undefined) return Promise.resolve({ agent: liveAgent, created: false })
 
   const pending = inFlight.get(sessionId)
   if (pending !== undefined) return pending
@@ -88,7 +98,7 @@ export function resolvePromptAgent(deps: SessionLifecycleDeps, input: ResolvePro
   return resolution
 }
 
-async function resolveColdAgent(deps: SessionLifecycleDeps, input: ResolvePromptInput): Promise<ResolvedAgent> {
+async function resolveColdAgent(deps: SessionLifecycleDeps, input: ResolvePromptInput): Promise<ResolvedAgentResult> {
   const { sessionId, cwd, agentOptions } = input
   // W1: a prompt before initialize has no route/model — refuse loudly rather than create with defaults.
   if (agentOptions === undefined) {
@@ -113,16 +123,21 @@ async function resolveColdAgent(deps: SessionLifecycleDeps, input: ResolvePrompt
         events: inspected.events ?? [],
       }),
     })
-    return handle.agent
+    return { agent: handle.agent, created: false }
   }
 
+  // Create: compose under the caller-chosen preset (Change 4b) if any, else the default. TWO things must
+  // carry the preset (mirroring apiproxy composeAgent + agents.create, api-proxy.ts:1615): (1) `meta.agentPreset`
+  // so dsh RECORDS it on the session header (→ resolveSessionPreset/getAgentPreset report it, and a later
+  // resume re-composes it); (2) the `setup` mount so the runtime toolset is actually composed under it.
+  // meta alone would report-but-not-compose; setup alone would compose-but-not-record (get reads standard).
   const handle = await deps.agents.create({
     sessionId: SessionId(sessionId),
-    meta: { cwd },
+    meta: { cwd, ...(input.agentPreset === undefined ? {} : { agentPreset: input.agentPreset }) },
     agentOptions,
-    ...composeAgentSetup(deps, { header: {}, events: [] }),
+    ...composeAgentSetup(deps, { header: input.agentPreset === undefined ? {} : { agentPreset: input.agentPreset }, events: [] }),
   })
-  return handle.agent
+  return { agent: handle.agent, created: true }
 }
 
 function composeAgentSetup(

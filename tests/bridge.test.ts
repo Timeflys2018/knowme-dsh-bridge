@@ -240,6 +240,27 @@ describe('knowme/permission.get + set — permission-presets exposure', () => {
     expect(calls).toEqual(['setPolicy:never', 'set:read-only'])
   })
 
+  it('applyPermissionPreset (Change 4b create-time entry) runs the same resolve→setPolicy→set core', async () => {
+    const calls: string[] = []
+    const p = presets({ set: (_s, name) => { calls.push(`set:${name}`) } })
+    const approvalService: ApprovalServiceLike = { setPolicy: (_a, policy) => { calls.push(`setPolicy:${policy}`) } }
+    const h = fakeBridgeDeps({ resolvePermissionPresets: () => p, resolveApprovalService: () => approvalService })
+    const agent = h.makeAgent('s-create')
+    const bridge = createBridge(h.deps)
+    bridge.applyPermissionPreset(agent, 'read-only')
+    expect(calls).toEqual(['setPolicy:never', 'set:read-only'])
+  })
+
+  it('applyPermissionPreset rejects custom + throws permission-unavailable when the service is absent', () => {
+    const h = fakeBridgeDeps({ resolvePermissionPresets: () => presets() })
+    const agent = h.makeAgent('s-c')
+    const bridge = createBridge(h.deps)
+    expect(() => bridge.applyPermissionPreset(agent, 'custom')).toThrow(/unknown-preset/)
+    const h2 = fakeBridgeDeps()
+    const agent2 = h2.makeAgent('s-c2')
+    expect(() => createBridge(h2.deps).applyPermissionPreset(agent2, 'read-only')).toThrow(/permission-unavailable/)
+  })
+
   it('set rejects custom and unknown presets with unknown-preset', async () => {
     const h = fakeBridgeDeps({ sessionProjections: projections('workspace-write'), resolvePermissionPresets: () => presets() })
     h.makeAgent('s1')

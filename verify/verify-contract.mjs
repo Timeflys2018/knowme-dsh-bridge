@@ -263,6 +263,21 @@ console.log('\n[15] bridge-owned agentPreset wire contract')
   check(bridgeSrc.includes('presetSwitches'), 'bridge serializes agent preset switches per session')
 }
 
+console.log('\n[16] Change 4b — session/prompt accepts + threads agentPreset + permissionPreset (create-time)')
+{
+  const indexSrc = readFileSync(join(here, '..', 'src', 'index.ts'), 'utf8')
+  const lifecycleSrc = readFileSync(join(here, '..', 'src', 'session-lifecycle.ts'), 'utf8')
+  const bridgeSrc = readFileSync(join(here, '..', 'src', 'bridge.ts'), 'utf8')
+  // The session/prompt handler reads both new params and applies permission on the create path before followup.
+  check(/agentPreset\?:\s*string;\s*permissionPreset\?:\s*string/.test(indexSrc), 'session/prompt reads agentPreset + permissionPreset params')
+  check(indexSrc.includes('bridge.applyPermissionPreset') && indexSrc.indexOf('bridge.applyPermissionPreset') < indexSrc.indexOf('agent.followup(message)'), 'permission applied BEFORE the first followup')
+  check(indexSrc.includes('created &&'), 'permission applied only on the create path (created flag)')
+  // The create branch composes under the chosen preset; resume ignores it (stored wins).
+  check(lifecycleSrc.includes('agentPreset?: string') && /header:\s*input\.agentPreset === undefined/.test(lifecycleSrc), 'create composes under input.agentPreset via the header channel')
+  check(/created:\s*true/.test(lifecycleSrc) && /created:\s*false/.test(lifecycleSrc), 'resolvePromptAgent returns the created flag')
+  check(bridgeSrc.includes('applyPermissionPreset(agent: AgentLike'), 'bridge exposes applyPermissionPreset(agent, preset)')
+}
+
 console.log('')
 if (failures.length > 0) {
   console.error(`[verify:contract] FAILED — ${failures.length} surface(s) drifted from the pinned contract:`)

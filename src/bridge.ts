@@ -257,6 +257,10 @@ export interface QuestionRespondParams {
 
 export interface Bridge {
   handleRequest(method: string, params: Record<string, unknown> | undefined): Promise<unknown>
+  // Apply a permission preset to a specific agent (Change 4b: at session create, before the first
+  // followup). Throws the same permission-* errors as knowme/permission.set; the caller decides whether
+  // a failure blocks (create-time: it does not — the turn proceeds under the default).
+  applyPermissionPreset(agent: AgentLike, preset: string): void
   readonly approvalAsk: ApprovalAskListener
   readonly questionProvider: QuestionProviderLike
   disableQuestions(reason: string): void
@@ -539,26 +543,21 @@ export function createBridge(deps: BridgeDeps): Bridge {
     return { preset: perm.currentValue, options: perm.options.map((o) => ({ value: o.value, name: o.name, ...(o.description === undefined ? {} : { description: o.description }) })) }
   }
 
-  async function permissionSet(params: Record<string, unknown> | undefined): Promise<unknown> {
-    const method = BRIDGE_METHODS.permissionSet
-    const sessionId = requireString(params, method, 'sessionId')
-    const preset = requireString(params, method, 'preset')
+  // The /permission-command effect on a given agent: resolve the preset, write the notice-injecting
+  // approval policy FIRST (so the model sees the switch as a conversation event), then set() — whose
+  // internal apply() sees the approval already == spec.approval and skips the raw (notice-less) write,
+  // still emitting the preset + sandbox/mode events. Absent approval service → set() alone. Shared by
+  // knowme/permission.set (existing session) AND Change 4b's apply-at-create (before the first followup).
+  function applyPermissionPreset(agent: AgentLike, preset: string): void {
     if (preset === 'custom') throw new Error(`${ERROR_NAMES.unknownPreset}: 'custom' is not a settable preset`)
-    const agent = deps.agents.get(sessionId)
-    if (agent === undefined) throw new Error(`${ERROR_NAMES.sessionNotFound}: ${sessionId}`)
     const presets = deps.resolvePermissionPresets?.()
-    if (presets === undefined) throw new Error(`${ERROR_NAMES.permissionUnavailable}: ${method} requires the permissionPresets service`)
-
+    if (presets === undefined) throw new Error(`${ERROR_NAMES.permissionUnavailable}: requires the permissionPresets service`)
     let spec: { sandbox: string; approval: string }
     try {
       spec = presets.resolve(preset)
     } catch {
       throw new Error(`${ERROR_NAMES.unknownPreset}: ${preset}`)
     }
-    // Replicate the /permission command's effect using public methods (design D2): the notice-injecting
-    // approval write FIRST (so the model sees the switch as a conversation event), then set() — whose
-    // internal apply() then sees the approval already == spec.approval and skips the raw (notice-less)
-    // write, still emitting the preset + sandbox/mode events. Absent approval service → set() alone.
     try {
       deps.resolveApprovalService?.()?.setPolicy(agent, spec.approval)
       presets.set(agent.session, preset)
@@ -567,6 +566,15 @@ export function createBridge(deps: BridgeDeps): Bridge {
       if (/cannot change sandbox mode/i.test(msg)) throw new Error(`${ERROR_NAMES.permissionLocked}: ${msg}`)
       throw new Error(`${ERROR_NAMES.permissionWriteFailed}: ${msg}`)
     }
+  }
+
+  async function permissionSet(params: Record<string, unknown> | undefined): Promise<unknown> {
+    const method = BRIDGE_METHODS.permissionSet
+    const sessionId = requireString(params, method, 'sessionId')
+    const preset = requireString(params, method, 'preset')
+    const agent = deps.agents.get(sessionId)
+    if (agent === undefined) throw new Error(`${ERROR_NAMES.sessionNotFound}: ${sessionId}`)
+    applyPermissionPreset(agent, preset)
     return { resolved: true }
   }
 
@@ -765,6 +773,7 @@ export function createBridge(deps: BridgeDeps): Bridge {
           throw new Error(`unknown knowme-dsh-bridge method: ${method}`)
       }
     },
+    applyPermissionPreset,
     approvalAsk,
     questionProvider,
     disableQuestions(reason) {

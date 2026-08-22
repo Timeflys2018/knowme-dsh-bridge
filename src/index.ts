@@ -157,13 +157,29 @@ export function apply(ctx: BridgePluginContext, config: JsonRpcConfig): void {
       // Bridge owns session/prompt lifecycle: three-state resolve (reuse/resume/create) so a persisted
       // session reopens its JSONL instead of colliding on create (design D4). Delivery mirrors the stock
       // server's prompt(): createUserMessage + agent.followup → { messageId }.
-      const p = (params ?? {}) as Partial<SessionPromptParams>
+      // Change 4b: the new-session dialog's chosen mode + permission ride this first prompt (agentPreset
+      // composes the create; permissionPreset is applied to the fresh agent BEFORE its first followup so
+      // turn-1 is already constrained — post-hoc apply would race the create + miss turn-1's early tools).
+      const p = (params ?? {}) as Partial<SessionPromptParams> & { agentPreset?: string; permissionPreset?: string }
       if (typeof p.sessionId !== 'string') throw new Error('session/prompt: sessionId must be a string')
-      const agent = await resolvePromptAgent(lifecycleDeps, {
+      const { agent, created } = await resolvePromptAgent(lifecycleDeps, {
         sessionId: p.sessionId,
         cwd: initParams?.cwd ?? '',
         agentOptions: initParams?.agentOptions,
+        ...(typeof p.agentPreset === 'string' ? { agentPreset: p.agentPreset } : {}),
       })
+      if (created && typeof p.permissionPreset === 'string') {
+        const freshAgent = ctx.agents.get(p.sessionId) as AgentLike | undefined
+        if (freshAgent !== undefined) {
+          try {
+            bridge.applyPermissionPreset(freshAgent, p.permissionPreset)
+          } catch (error) {
+            // A permission-apply failure must not drop the turn; surface it and let the session run under
+            // its default permission (the renderer/chip reflects the real state on the next fetch).
+            ctx.logger?.warn(`knowme-dsh-bridge: apply permission "${p.permissionPreset}" at create failed: ${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
+      }
       const message = createUserMessage({ content: p.contentBlocks ?? [], source: { kind: 'user' } })
       agent.followup(message)
       return { messageId: message.id }
