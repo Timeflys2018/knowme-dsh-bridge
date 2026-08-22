@@ -1,6 +1,6 @@
 # Spike deployment: real dsh runtime, keyless replay LLM, bridge as the single
 # SDK entry. Baseline copied from dsh examples/jsonrpc-agent/cordis.yml with
-# llm-deepseek → llm-replay, sdk-jsonrpc-server → @knowme/dsh-bridge, plus the
+# llm-deepseek → llm-replay, sdk-jsonrpc-server → knowme-dsh-bridge, plus the
 # approval/user-questions services and the spike trigger fixture.
 # Stdout is reserved for JSON-RPC; diagnostics go to stderr.
 
@@ -46,7 +46,7 @@
 - id: agent-spine
   name: '@deepseek-ai/dsh-agent-spine-demo'
   config:
-    persona: 'You are the @knowme/dsh-bridge verification spike.'
+    persona: 'You are the knowme-dsh-bridge verification spike.'
     workspaceContext: false
     skills:
       enabled: false
@@ -154,4 +154,4 @@
 # --- the SDK entry: single transport owner (replaces sdk-jsonrpc-server) ---
 
 - id: knowme-bridge
-  name: '@knowme/dsh-bridge'
+  name: 'knowme-dsh-bridge'

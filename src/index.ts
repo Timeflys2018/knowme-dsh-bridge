@@ -1,5 +1,5 @@
 /**
- * @knowme/dsh-bridge — B3-small wire-bridge cordis plugin entry.
+ * knowme-dsh-bridge — B3-small wire-bridge cordis plugin entry.
  *
  * Mounts into a dsh deployment's cordis.yml (see cordis.example.yml) IN PLACE
  * of `@deepseek-ai/dsh-sdk-jsonrpc-server`: this plugin owns the single stdio

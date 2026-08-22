@@ -36,7 +36,7 @@ describe('knowme/listPlugins — cordis loader projection', () => {
         entry({ id: 'group-1', options: { name: 'grp', group: true } }),
         entry({ id: 'llm', options: { name: '@deepseek-ai/dsh-llm' }, fiber: { state: 2 } }),
         entry({ id: 'sandbox', options: { name: '@deepseek-ai/dsh-tool-pwsh-sandbox' }, disabled: true, fiber: { state: 4 } }),
-        entry({ id: 'bridge', options: { name: '@knowme/dsh-bridge' } }),
+        entry({ id: 'bridge', options: { name: 'knowme-dsh-bridge' } }),
       ],
     }
     const bridge = createBridge({ ...fakeBridgeDeps().deps, loader })
@@ -47,7 +47,7 @@ describe('knowme/listPlugins — cordis loader projection', () => {
     expect(result.entries).toEqual([
       { entryId: 'llm', moduleName: '@deepseek-ai/dsh-llm', enabled: true, fiberPhase: 'active' },
       { entryId: 'sandbox', moduleName: '@deepseek-ai/dsh-tool-pwsh-sandbox', enabled: false, fiberPhase: null },
-      { entryId: 'bridge', moduleName: '@knowme/dsh-bridge', enabled: true, fiberPhase: null },
+      { entryId: 'bridge', moduleName: 'knowme-dsh-bridge', enabled: true, fiberPhase: null },
     ])
   })
 

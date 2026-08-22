@@ -1,4 +1,4 @@
-# @knowme/dsh-bridge
+# knowme-dsh-bridge
 
 > **Status**: implemented against pinned dsh `0.1.0-rc.8` (see "Version discipline"). If a future dsh
 > stable release adds these methods to the official SDK surface, prefer the official methods and retire
@@ -72,7 +72,7 @@ neither can nor should rescue that shape (upstream documents the ask as turn-enc
 
 This plugin depends on dsh runtime packages as **peerDependencies** (not workspace). The rc line lives
 under npm's `next` dist-tag (`latest` still points at older rcs), so pin explicitly, e.g.
-`pnpm add @deepseek-ai/dsh-sdk-jsonrpc-server@0.1.0-rc.8 @knowme/dsh-bridge@<ver>`, then mount the
+`pnpm add @deepseek-ai/dsh-sdk-jsonrpc-server@0.1.0-rc.8 knowme-dsh-bridge@<ver>`, then mount the
 bridge **in place of** `@deepseek-ai/dsh-sdk-jsonrpc-server` in your `cordis.yml` — the bridge owns the
 single stdio transport and routes the official 5 methods to the official server class itself. Compose
 `llm` / `@deepseek-ai/dsh-user-approval` / `@deepseek-ai/dsh-user-questions` **before** the bridge row

@@ -1,4 +1,4 @@
-# @knowme/dsh-bridge bundle patch: insert the bridge as the SDK stdio entry
+# knowme-dsh-bridge bundle patch: insert the bridge as the SDK stdio entry
 # of a profile composed over dsh-base.
 #
 # dsh-base already mounts everything the bridge methods read (approval,
@@ -10,7 +10,7 @@
 # nothing to disable.
 - insert:
     - id: knowme-bridge
-      name: '@knowme/dsh-bridge'
+      name: 'knowme-dsh-bridge'
     # Compose the session-stats projection (turns/steps/timing/first-token/throughput) so
     # knowme/sessionStats can read values.sessionStats — dsh-base already provides the
     # sessionProjections registry (its only inject), so this row is sufficient. Mirrors dsh's

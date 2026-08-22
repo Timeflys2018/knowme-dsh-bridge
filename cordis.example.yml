@@ -1,4 +1,4 @@
-# Example: mount @knowme/dsh-bridge as the SDK entry of a dsh deployment.
+# Example: mount knowme-dsh-bridge as the SDK entry of a dsh deployment.
 # Copy the relevant rows into your real cordis.yml.
 #
 # SHAPE (single transport owner): the bridge REPLACES
@@ -34,7 +34,7 @@ plugins:
 
   # --- the SDK entry (single transport owner) ---
 
-  '@knowme/dsh-bridge': {}
+  'knowme-dsh-bridge': {}
 
   # ... the rest of your dsh composition (agents/agent-loop, subprocess, bash,
   # session persistence, fs, token-meter, compaction, ...) provides the
