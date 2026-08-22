@@ -25,6 +25,7 @@ import {
   type DshCommand,
   type DshCommandExecution,
   type DshAgentPreset,
+  type DshDefaults,
   type DshPermission,
   type DshSessionStats,
   ERROR_NAMES,
@@ -154,10 +155,15 @@ export interface SessionProjectionsLike {
   snapshot(session: object): ProjectionSnapshotLike
 }
 
-/** dsh permission-presets service surface for knowme/permission.set (structural; no runtime dsh import). */
+/** dsh permission-presets service surface for knowme/permission.set + knowme/defaults.get (structural; no runtime dsh import). */
 export interface PermissionPresetsLike {
   resolve(name: string): { readonly sandbox: string; readonly approval: string }
   set(session: object, name: string): void
+  // Session-independent profile defaults for knowme/defaults.get. `names` is the switchable preset ids
+  // (declaration order); `defaultPreset` is the preset a fresh session gets. Both are already public on
+  // dsh's PermissionPresetService (getters, settings-backed) — read WITHOUT a live session.
+  readonly names?: readonly string[]
+  readonly defaultPreset?: string
 }
 
 /** dsh agent-presets service surface for knowme/agentPreset.* (structural; no runtime dsh import). */
@@ -532,6 +538,36 @@ export function createBridge(deps: BridgeDeps): Bridge {
     return stats
   }
 
+  // Session-LESS profile defaults (knowme/defaults.get): the mode + permission a FRESH session would get,
+  // read from the profile-global preset services — NO sessionId, NO live agent (unlike *Get below). A
+  // service that isn't composed degrades to { default: null, options: [] }. Lets a new-session UI show
+  // the concrete default before any session exists (agentPreset.get/permission.get can't — they need an agent).
+  async function defaultsGet(): Promise<DshDefaults> {
+    const agentPresets = deps.resolveAgentPresets?.()
+    const mode =
+      agentPresets === undefined
+        ? { default: null, options: [] as DshDefaults['mode']['options'] }
+        : {
+            default: agentPresets.defaultId,
+            options: (await agentPresets.list())
+              .filter((preset) => preset.broken !== true)
+              .map((preset) => ({
+                value: preset.id,
+                name: preset.name ?? preset.id,
+                ...(preset.description === undefined ? {} : { description: preset.description }),
+              })),
+          }
+    const permPresets = deps.resolvePermissionPresets?.()
+    const permission =
+      permPresets?.defaultPreset === undefined
+        ? { default: null, options: [] as DshDefaults['permission']['options'] }
+        : {
+            default: permPresets.defaultPreset,
+            options: (permPresets.names ?? []).map((value) => ({ value, name: value })),
+          }
+    return { mode, permission }
+  }
+
   async function permissionGet(params: Record<string, unknown> | undefined): Promise<DshPermission> {
     const sessionId = requireString(params, BRIDGE_METHODS.permissionGet, 'sessionId')
     const empty: DshPermission = { preset: null, options: [] }
@@ -757,6 +793,8 @@ export function createBridge(deps: BridgeDeps): Bridge {
           return listPlugins()
         case BRIDGE_METHODS.sessionStats:
           return sessionStats(params)
+        case BRIDGE_METHODS.defaultsGet:
+          return defaultsGet()
         case BRIDGE_METHODS.permissionGet:
           return permissionGet(params)
         case BRIDGE_METHODS.agentPresetGet:

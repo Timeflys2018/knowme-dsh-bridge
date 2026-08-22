@@ -44,6 +44,7 @@ export const BRIDGE_METHODS = {
   questionRespond: 'knowme/question-respond',
   listPlugins: 'knowme/listPlugins',
   sessionStats: 'knowme/sessionStats',
+  defaultsGet: 'knowme/defaults.get',
   permissionGet: 'knowme/permission.get',
   permissionSet: 'knowme/permission.set',
   agentPresetGet: 'knowme/agentPreset.get',
@@ -187,6 +188,25 @@ export interface DshAgentPreset {
   readonly options: readonly { readonly value: string; readonly name: string; readonly description?: string }[]
   readonly default: string | null
   readonly locked: boolean
+}
+
+/**
+ * Session-LESS profile defaults for `knowme/defaults.get` — the agent-preset
+ * (mode) and permission defaults + selectable options a FRESH session would
+ * receive, read from the profile-global preset services WITHOUT creating a
+ * session (unlike agentPreset.get/permission.get, which require a live agent).
+ * A field is null/[] when its service is not composed. Lets a new-session UI
+ * show the concrete default instead of a placeholder before any session exists.
+ */
+export interface DshDefaults {
+  readonly mode: {
+    readonly default: string | null
+    readonly options: readonly { readonly value: string; readonly name: string; readonly description?: string }[]
+  }
+  readonly permission: {
+    readonly default: string | null
+    readonly options: readonly { readonly value: string; readonly name: string; readonly description?: string }[]
+  }
 }
 
 /**
