@@ -14,6 +14,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const SNAPSHOT = join(HERE, 'fixtures', 'two-turn.session.jsonl')
 const BIN = join(HERE, 'bin.mjs')
 const CORDIS = join(HERE, 'cordis.yml')
+const PRESET_ROOT = join(HERE, 'presets')
 const RUN_ROOT = mkdtempSync(join('/tmp/opencode', 'knowme-dsh-bridge-spike-'))
 const TIMEOUT_MS = 30_000
 
@@ -27,7 +28,7 @@ const bad = (label, detail) => {
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)) }
 
 class SpikeRun {
-  constructor(name, dirOverride) {
+  constructor(name, dirOverride, createBlankAgent = false) {
     this.name = name
     // dirOverride lets a second process reuse the first's sessions dir, simulating a runner recycle
     // (T4): the fresh process must RESUME the persisted JSONL, not collide on create.
@@ -37,6 +38,7 @@ class SpikeRun {
     this.exitCode = null
     this.pending = new Map()
     this.seq = 0
+    this.createBlankAgent = createBlankAgent
   }
 
   async start() {
@@ -47,11 +49,17 @@ class SpikeRun {
       .replaceAll('__SNAPSHOT__', SNAPSHOT)
       .replaceAll('__SESSIONS__', join(this.dir, 'sessions'))
       .replaceAll('__CWD__', this.dir)
+      .replaceAll('__PRESET_ROOT__', PRESET_ROOT)
     this.configPath = join(this.dir, 'cordis.yml')
     writeFileSync(this.configPath, template)
     this.child = spawn(process.execPath, [BIN, this.configPath], {
       cwd: HERE,
-      env: { ...process.env, DSH_CORDIS_CONFIG: this.configPath },
+      env: {
+        ...process.env,
+        DSH_CORDIS_CONFIG: this.configPath,
+        KNOWME_SPIKE_CREATE_BLANK: this.createBlankAgent ? '1' : '',
+        KNOWME_SPIKE_CWD: this.dir,
+      },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     let buffer = ''
@@ -141,9 +149,9 @@ class SpikeRun {
 const turnEnd = (sessionId) => (n) =>
   n.method === 'session.event' && n.params?.sessionId === sessionId && n.params?.event?.type === 'turn/end'
 
-async function tier(name, fn) {
+async function tier(name, fn, options = {}) {
   console.log(`\n[${name}]`)
-  const run = new SpikeRun(name)
+  const run = new SpikeRun(name, undefined, options.createBlankAgent === true)
   try {
     await run.start()
     await fn(run)
@@ -432,6 +440,53 @@ await tier('T6b preset survives resume-across-recycle', async (run) => {
   if ((await run2.exitPromise) !== 0) throw new Error('t6b process-2 non-zero exit')
 })
 
+await tier('T6c agentPreset get→set→get + lock + resume', async (run) => {
+  await run.request('initialize', { cwd: run.dir, provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+
+  let initial
+  for (let i = 0; i < 50; i++) {
+    initial = await run.request('knowme/agentPreset.get', { sessionId: 'preset-blank' })
+    if (initial.result?.preset === 'standard') break
+    await sleep(100)
+  }
+  if (initial?.result?.preset !== 'standard') throw new Error(`agentPreset.get before switch did not show default standard: ${JSON.stringify(initial)}`)
+  ok(`agentPreset.get(blank) → preset=${initial.result.preset}`)
+
+  const set = await run.request('knowme/agentPreset.set', { sessionId: 'preset-blank', preset: 'minimal' })
+  if (set.error !== undefined) throw new Error(`agentPreset.set(minimal) errored: ${JSON.stringify(set.error)}`)
+  if (set.result?.preset !== 'minimal') throw new Error(`set did not return canonical minimal: ${JSON.stringify(set.result)}`)
+  ok('agentPreset.set(minimal) on blank session → {resolved:true,preset:minimal}')
+
+  const after = await run.request('knowme/agentPreset.get', { sessionId: 'preset-blank' })
+  if (after.result?.preset !== 'minimal' || after.result?.locked !== false) throw new Error(`agentPreset.get after set wrong: ${JSON.stringify(after)}`)
+  ok(`agentPreset.get after set → preset=${after.result.preset}, locked=${after.result.locked}`)
+
+  await run.request('session/prompt', { sessionId: 'preset-blank', contentBlocks: [{ type: 'text', text: 'run a real turn after the preset switch' }] })
+  await run.waitFor(turnEnd('preset-blank'), 'turn/end after preset switch')
+  const locked = await run.request('knowme/agentPreset.set', { sessionId: 'preset-blank', preset: 'standard' })
+  if (locked.error === undefined || !/agent-preset-locked/.test(JSON.stringify(locked.error))) {
+    throw new Error(`set after turn should reject agent-preset-locked: ${JSON.stringify(locked)}`)
+  }
+  ok('agentPreset.set after turn → agent-preset-locked')
+
+  const sd1 = await run.request('shutdown', {})
+  if (sd1.result === undefined) throw new Error('T6c process-1 shutdown failed')
+  if ((await run.exitPromise) !== 0) throw new Error('T6c process-1 non-zero exit')
+
+  const run2 = new SpikeRun('T6c-p2', run.dir)
+  await run2.start()
+  await run2.request('initialize', { cwd: run.dir, provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+  const resumedPrompt = await run2.request('session/prompt', { sessionId: 'preset-blank', contentBlocks: [{ type: 'text', text: 'resume under the switched preset' }] })
+  if (resumedPrompt.error !== undefined) throw new Error(`resume prompt errored: ${JSON.stringify(resumedPrompt.error)}`)
+  const resumed = await run2.request('knowme/agentPreset.get', { sessionId: 'preset-blank' })
+  if (resumed.result?.preset !== 'minimal') throw new Error(`agentPreset resume lost selected preset: ${JSON.stringify(resumed)}`)
+  ok(`process 2 RESUMED preset-blank with logged agentPreset=${resumed.result.preset}`)
+
+  const sd2 = await run2.request('shutdown', {})
+  if (sd2.result === undefined) throw new Error('T6c process-2 shutdown failed')
+  if ((await run2.exitPromise) !== 0) throw new Error('T6c process-2 non-zero exit')
+}, { createBlankAgent: true })
+
 await tier('T7 commands list + execute', async (run) => {
   await run.request('initialize', { cwd: run.dir, provider: 'deepseek-official', model: 'deepseek-v4-flash' })
   await run.request('session/prompt', { sessionId: 't7', contentBlocks: [{ type: 'text', text: 'boot so an agent exists' }] })
@@ -488,4 +543,4 @@ if (failures.length > 0) {
   console.error(`[verify:spike] FAILED: ${failures.join(', ')} (run root: ${RUN_ROOT})`)
   process.exit(1)
 }
-console.log('[verify:spike] OK — T1 T2 T3 T3b T4 T5 T6 T6b T7 all passed')
+console.log('[verify:spike] OK — T1 T2 T3 T3b T4 T5 T6 T6b T6c T7 all passed')

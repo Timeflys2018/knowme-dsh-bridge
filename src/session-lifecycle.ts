@@ -1,5 +1,7 @@
 import { SessionId } from '@deepseek-ai/dsh-session'
 
+import { resolveSessionPresetFromEvents, type SessionEventLike } from './bridge.js'
+
 /**
  * session-lifecycle — the three-state prompt-agent resolver (design D4). dsh's stock SDK server only
  * ever `create()`s, so resuming a session whose JSONL log already exists on disk throws an id-collision.
@@ -29,19 +31,33 @@ export interface AgentOptionsLike {
   readonly maxTokens?: number
 }
 
+interface AgentSetupOptionsLike {
+  readonly setup?: (agentCtx: object) => Promise<void>
+}
+
+interface AgentPresetMountsLike {
+  readonly defaultId: string
+  resolve(id?: string): Promise<{ readonly id: string }>
+  mount(agentCtx: object, id?: string): Promise<{ readonly id: string } | void>
+}
+
 export interface SessionLifecycleDeps {
   readonly agents: {
     get: (id: unknown) => DshAgent | undefined
-    create: (opts: { sessionId: unknown; meta: { cwd: string }; agentOptions?: AgentOptionsLike }) => Promise<AgentHandleLike>
-    resume: (opts: { resumeSessionId: unknown; agentOptions?: AgentOptionsLike }) => Promise<AgentHandleLike>
+    create: (opts: { sessionId: unknown; meta: { cwd: string }; agentOptions?: AgentOptionsLike } & AgentSetupOptionsLike) => Promise<AgentHandleLike>
+    resume: (opts: { resumeSessionId: unknown; agentOptions?: AgentOptionsLike } & AgentSetupOptionsLike) => Promise<AgentHandleLike>
   }
   readonly sessions: { get: (id: unknown) => unknown }
   readonly persistence:
     | {
         list: () => Promise<readonly { readonly id: string; readonly cwd?: string; readonly agentPreset?: string }[]>
-        inspect: (id: unknown) => Promise<{ readonly meta: { readonly id: string; readonly cwd?: string; readonly agentPreset?: string } }>
+        inspect: (id: unknown) => Promise<{
+          readonly meta: { readonly id: string; readonly cwd?: string; readonly agentPreset?: string }
+          readonly events?: readonly SessionEventLike[]
+        }>
       }
     | undefined
+  readonly resolveAgentPresets?: () => AgentPresetMountsLike | undefined
 }
 
 export interface ResolvePromptInput {
@@ -89,15 +105,47 @@ async function resolveColdAgent(deps: SessionLifecycleDeps, input: ResolvePrompt
     if (storedCwd !== undefined && storedCwd !== cwd) {
       throw new Error(`session "${sessionId}" cwd conflict: persisted "${storedCwd}" != requested "${cwd}"`)
     }
-    // NIT: knowme-sdk composes no preset, so resume passes no setup; a stored preset would rebuild a
-    // session the model can't act on. Refuse until a bridge-level preset story exists.
-    if (inspected.meta.agentPreset !== undefined) {
-      throw new Error(`session "${sessionId}" has a stored preset "${inspected.meta.agentPreset}"; preset-resume is unsupported`)
-    }
-    const handle = await deps.agents.resume({ resumeSessionId: SessionId(sessionId), agentOptions })
+    const handle = await deps.agents.resume({
+      resumeSessionId: SessionId(sessionId),
+      agentOptions,
+      ...composeAgentSetup(deps, {
+        header: inspected.meta.agentPreset === undefined ? {} : { agentPreset: inspected.meta.agentPreset },
+        events: inspected.events ?? [],
+      }),
+    })
     return handle.agent
   }
 
-  const handle = await deps.agents.create({ sessionId: SessionId(sessionId), meta: { cwd }, agentOptions })
+  const handle = await deps.agents.create({
+    sessionId: SessionId(sessionId),
+    meta: { cwd },
+    agentOptions,
+    ...composeAgentSetup(deps, { header: {}, events: [] }),
+  })
   return handle.agent
+}
+
+function composeAgentSetup(
+  deps: SessionLifecycleDeps,
+  stored: { readonly header: { readonly agentPreset?: string }; readonly events: readonly SessionEventLike[] },
+): AgentSetupOptionsLike {
+  const presets = deps.resolveAgentPresets?.()
+  if (presets === undefined) return {}
+  const resolvedId = resolveSessionPresetFromEvents(stored) ?? presets.defaultId
+  return {
+    setup: async (agentCtx) => {
+      try {
+        await presets.mount(agentCtx, resolvedId)
+      } catch (error) {
+        if (!isMissingPresetError(error)) throw error
+        process.stderr.write(`knowme-dsh-bridge: preset "${resolvedId}" could not be mounted; falling back to "${presets.defaultId}"\n`)
+        await presets.mount(agentCtx, presets.defaultId)
+      }
+    },
+  }
+}
+
+function isMissingPresetError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return error.name === 'UnknownPresetError' || error.name === 'PresetMountError' || error.message.includes('UnknownPresetError') || error.message.includes('PresetMountError')
 }

@@ -215,6 +215,54 @@ console.log('\n[13] commands service surfaces (knowme/commands.list + execute)')
   }
 }
 
+console.log('\n[14] agent-presets service surfaces (knowme/agentPreset.get + set)')
+{
+  const profileNm = join(homedir(), '.dsh', 'profiles', 'node_modules', '@deepseek-ai')
+  const apPath = join(profileNm, 'dsh-agent-presets', 'src', 'index.ts')
+  const sessionPath = join(profileNm, 'dsh-agent-presets', 'src', 'session.ts')
+  const presetPath = join(profileNm, 'dsh-agent-presets', 'src', 'preset.ts')
+  if (!existsSync(apPath) || !existsSync(sessionPath) || !existsSync(presetPath)) {
+    console.log('  ⚠ skipped — dsh profile not installed (verify:spike pins this against the live runtime)')
+  } else {
+    const src = readFileSync(apPath, 'utf8')
+    const sessionSrc = readFileSync(sessionPath, 'utf8')
+    const presetSrc = readFileSync(presetPath, 'utf8')
+    check(/super\(ctx,\s*'agentPresets'\)/.test(src), "service registers as 'agentPresets'")
+    for (const method of ['list', 'resolve', 'recompose', 'mount']) {
+      check(new RegExp(`\\b${method}\\s*\\(`).test(src), `public ${method}(...) present`)
+    }
+    const shippedRoot = join(profileNm, 'dsh-web-app', 'config', 'agent-presets')
+    if (!existsSync(shippedRoot)) {
+      console.log('  ⚠ skipped built-in id pin — shipped agent-preset root not present in this installed profile tree')
+    } else {
+      for (const id of ['standard', 'code', 'minimal', 'cordis']) {
+        check(existsSync(join(shippedRoot, id, 'agent.cordis.yml')), `built-in preset id '${id}' present`)
+      }
+    }
+    check(sessionSrc.includes('agent-preset/selected'), "session event 'agent-preset/selected' present")
+    check(/function\s+resolveSessionPreset\b/.test(sessionSrc), 'resolveSessionPreset(session) present')
+    check(/class\s+UnknownPresetError\b/.test(presetSrc), 'UnknownPresetError class present')
+    check(/class\s+PresetMountError\b/.test(presetSrc), 'PresetMountError class present')
+    const ver = require(join(profileNm, 'dsh-agent-presets', 'package.json')).version
+    check(ver === PINNED, `@deepseek-ai/dsh-agent-presets@${ver} === ${PINNED}`)
+  }
+}
+
+console.log('\n[15] bridge-owned agentPreset wire contract')
+{
+  const contractSrc = readFileSync(join(here, '..', 'src', 'contract.ts'), 'utf8')
+  const bridgeSrc = readFileSync(join(here, '..', 'src', 'bridge.ts'), 'utf8')
+  check(contractSrc.includes("agentPresetGet: 'knowme/agentPreset.get'"), 'BRIDGE_METHODS.agentPresetGet pinned')
+  check(contractSrc.includes("agentPresetSet: 'knowme/agentPreset.set'"), 'BRIDGE_METHODS.agentPresetSet pinned')
+  for (const name of ['agent-preset-locked', 'agent-preset-not-found', 'agent-preset-invalid', 'agent-preset-append-failed']) {
+    check(contractSrc.includes(name), `ERROR_NAMES includes ${name}`)
+  }
+  check(/append<T\s+extends\s+string>\(type:\s*T,\s*data:\s*unknown\):\s*unknown/.test(bridgeSrc), 'AgentLike.session.append structural surface pinned')
+  check(bridgeSrc.includes("event.type === 'turn/start'"), "bridge lock predicate checks 'turn/start'")
+  check(bridgeSrc.includes('resolveSessionPresetFromEvents'), 'bridge resolves newest agent-preset/selected event')
+  check(bridgeSrc.includes('presetSwitches'), 'bridge serializes agent preset switches per session')
+}
+
 console.log('')
 if (failures.length > 0) {
   console.error(`[verify:contract] FAILED — ${failures.length} surface(s) drifted from the pinned contract:`)

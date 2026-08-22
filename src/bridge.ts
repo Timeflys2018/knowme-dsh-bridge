@@ -24,6 +24,7 @@ import {
   BRIDGE_NOTIFICATIONS,
   type DshCommand,
   type DshCommandExecution,
+  type DshAgentPreset,
   type DshPermission,
   type DshSessionStats,
   ERROR_NAMES,
@@ -39,7 +40,12 @@ export interface SessionEventLike {
 
 export interface AgentLike {
   readonly id: string
-  readonly session: { readonly id: string; readonly events: readonly SessionEventLike[] }
+  readonly session: {
+    readonly id: string
+    readonly header?: { readonly agentPreset?: string }
+    readonly events: readonly SessionEventLike[]
+    append<T extends string>(type: T, data: unknown): unknown
+  }
   readonly ctx: object
 }
 
@@ -154,6 +160,14 @@ export interface PermissionPresetsLike {
   set(session: object, name: string): void
 }
 
+/** dsh agent-presets service surface for knowme/agentPreset.* (structural; no runtime dsh import). */
+export interface AgentPresetsLike {
+  list(): Promise<readonly { readonly id: string; readonly name?: string; readonly description?: string; readonly broken?: boolean }[]>
+  resolve(id?: string): Promise<{ readonly id: string }>
+  recompose(agentCtx: object, id: string): Promise<{ readonly id: string }>
+  readonly defaultId: string
+}
+
 /** dsh approval service surface — the notice-injecting policy write the /permission command uses. */
 export interface ApprovalServiceLike {
   setPolicy(agent: object, policy: string): void
@@ -179,6 +193,8 @@ export interface BridgeDeps {
   readonly sessionProjections?: SessionProjectionsLike
   /** Late-resolve the permission-presets service per knowme/permission.set call (its fiber is not ACTIVE at apply() time); undefined → permission-unavailable. */
   readonly resolvePermissionPresets?: () => PermissionPresetsLike | undefined
+  /** Late-resolve the agent-presets service per knowme/agentPreset.* call (its fiber is not ACTIVE at apply() time); undefined → empty read / invalid set. */
+  readonly resolveAgentPresets?: () => AgentPresetsLike | undefined
   /** Late-resolve the approval service for the notice-injecting policy write; undefined → set() alone (no notice). */
   readonly resolveApprovalService?: () => ApprovalServiceLike | undefined
   /** Late-resolve the commands service per knowme/commands.* call (its fiber is not ACTIVE at apply() time); undefined → commands-unavailable / empty. */
@@ -305,9 +321,29 @@ export function recoverApprovalId(
   return undefined
 }
 
+export function resolveSessionPresetFromEvents(session: { readonly header?: { readonly agentPreset?: string }; readonly events: readonly SessionEventLike[] }): string | undefined {
+  for (let index = session.events.length - 1; index >= 0; index -= 1) {
+    const event = session.events[index]
+    if (event?.type !== 'agent-preset/selected') continue
+    const data = recordOf(event.data)
+    if (typeof data?.['agentPreset'] === 'string') return data['agentPreset']
+  }
+  return session.header?.agentPreset
+}
+
+function sessionHasTurnStart(session: { readonly events: readonly SessionEventLike[] }): boolean {
+  return session.events.some((event) => event.type === 'turn/start')
+}
+
+function isPresetError(error: unknown, name: string): boolean {
+  if (!(error instanceof Error)) return false
+  return error.name === name || error.message.includes(name)
+}
+
 export function createBridge(deps: BridgeDeps): Bridge {
   const pendingApprovals = new Map<string, ParkedApproval>()
   const pendingQuestions = new Map<string, ParkedQuestion>()
+  const presetSwitches = new Map<string, Promise<unknown>>()
   const selectionRefs = new WeakMap<AgentLike, ModelSelectionRefLike>()
   let questionsUsable = true
 
@@ -534,6 +570,65 @@ export function createBridge(deps: BridgeDeps): Bridge {
     return { resolved: true }
   }
 
+  async function agentPresetGet(params: Record<string, unknown> | undefined): Promise<DshAgentPreset> {
+    const sessionId = requireString(params, BRIDGE_METHODS.agentPresetGet, 'sessionId')
+    const empty: DshAgentPreset = { preset: null, options: [], default: null, locked: false }
+    const presets = deps.resolveAgentPresets?.()
+    const agent = deps.agents.get(sessionId)
+    if (presets === undefined || agent === undefined) return empty
+    const options = (await presets.list())
+      .filter((preset) => preset.broken !== true)
+      .map((preset) => ({
+        value: preset.id,
+        name: preset.name ?? preset.id,
+        ...(preset.description === undefined ? {} : { description: preset.description }),
+      }))
+    return {
+      preset: resolveSessionPresetFromEvents(agent.session) ?? presets.defaultId,
+      options,
+      default: presets.defaultId,
+      locked: sessionHasTurnStart(agent.session),
+    }
+  }
+
+  async function agentPresetSet(params: Record<string, unknown> | undefined): Promise<unknown> {
+    const method = BRIDGE_METHODS.agentPresetSet
+    const sessionId = requireString(params, method, 'sessionId')
+    const preset = requireString(params, method, 'preset')
+    const prior = presetSwitches.get(sessionId) ?? Promise.resolve()
+    const next = prior.catch(() => undefined).then(() => agentPresetSetLocked(sessionId, preset))
+    presetSwitches.set(sessionId, next)
+    try {
+      return await next
+    } finally {
+      if (presetSwitches.get(sessionId) === next) presetSwitches.delete(sessionId)
+    }
+  }
+
+  async function agentPresetSetLocked(sessionId: string, preset: string): Promise<unknown> {
+    const agent = deps.agents.get(sessionId)
+    if (agent === undefined) throw new Error(`${ERROR_NAMES.sessionNotFound}: ${sessionId}`)
+    const presets = deps.resolveAgentPresets?.()
+    if (presets === undefined) throw new Error(`${ERROR_NAMES.agentPresetInvalid}: ${BRIDGE_METHODS.agentPresetSet} requires the agentPresets service`)
+    if (sessionHasTurnStart(agent.session)) throw new Error(`${ERROR_NAMES.agentPresetLocked}: ${sessionId}`)
+
+    let resolved: { readonly id: string }
+    try {
+      resolved = await presets.recompose(agent.ctx, preset)
+    } catch (error) {
+      if (isPresetError(error, 'UnknownPresetError')) throw new Error(`${ERROR_NAMES.agentPresetNotFound}: ${preset}`)
+      if (isPresetError(error, 'PresetMountError')) throw new Error(`${ERROR_NAMES.agentPresetInvalid}: ${preset}`)
+      throw error
+    }
+
+    try {
+      agent.session.append('agent-preset/selected', { agentPreset: resolved.id })
+    } catch (error) {
+      throw new Error(`${ERROR_NAMES.agentPresetAppendFailed}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    return { resolved: true, preset: resolved.id }
+  }
+
   async function commandsList(params: Record<string, unknown> | undefined): Promise<{ commands: readonly DshCommand[] }> {
     const sessionId = requireString(params, BRIDGE_METHODS.commandsList, 'sessionId')
     const agent = deps.agents.get(sessionId)
@@ -656,12 +751,16 @@ export function createBridge(deps: BridgeDeps): Bridge {
           return sessionStats(params)
         case BRIDGE_METHODS.permissionGet:
           return permissionGet(params)
+        case BRIDGE_METHODS.agentPresetGet:
+          return agentPresetGet(params)
         case BRIDGE_METHODS.commandsList:
           return commandsList(params)
         case BRIDGE_METHODS.commandsExecute:
           return commandsExecute(params)
         case BRIDGE_METHODS.permissionSet:
           return permissionSet(params)
+        case BRIDGE_METHODS.agentPresetSet:
+          return agentPresetSet(params)
         default:
           throw new Error(`unknown knowme-dsh-bridge method: ${method}`)
       }

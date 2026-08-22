@@ -17,3 +17,8 @@
     # own web-app bundle, which is the only shipped bundle that composes session-stats.
     - id: session-stats
       name: '@deepseek-ai/dsh-session-stats'
+    # Compose agentPresets so the CLI patches the shipped preset root; mirrors dsh-web-app.
+    - id: agent-presets
+      name: '@deepseek-ai/dsh-agent-presets'
+      config:
+        default: standard

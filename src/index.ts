@@ -26,6 +26,7 @@ import type { Readable, Writable } from 'node:stream'
 import {
   createBridge,
   type AgentLike,
+  type AgentPresetsLike,
   type BridgePluginContext,
   type LlmLike,
   type LoaderLike,
@@ -38,15 +39,15 @@ import {
 } from './bridge.js'
 import { resolvePromptAgent, type AgentOptionsLike, type SessionLifecycleDeps } from './session-lifecycle.js'
 
-export { createBridge, recoverApprovalId } from './bridge.js'
+export { createBridge, recoverApprovalId, resolveSessionPresetFromEvents } from './bridge.js'
 export type {
   AgentLike, ApprovalAskListener, ApprovalRequestLike, Bridge, BridgeDeps, LlmLike,
-  LoaderLike, LoaderEntryLike,
+  AgentPresetsLike, LoaderLike, LoaderEntryLike,
   ModelSelectionInstaller, ModelSelectionRefLike, QuestionProviderLike, QuestionRequestLike,
   SessionProjectionsLike, ProjectionSnapshotLike, TokenUsageProjectionLike, ContextPressureProjectionLike,
 } from './bridge.js'
 export { BRIDGE_METHODS, BRIDGE_NOTIFICATIONS, ERROR_NAMES, REQUIRED_SERVICES, PINNED_DSH_VERSION } from './contract.js'
-export type { PluginFiberPhase, PluginInventoryItem, DshSessionStats, DshPermission, DshCommand, DshCommandExecution } from './contract.js'
+export type { PluginFiberPhase, PluginInventoryItem, DshSessionStats, DshPermission, DshAgentPreset, DshCommand, DshCommandExecution } from './contract.js'
 
 /** Stable cordis plugin name (referenced from cordis.yml). */
 export const name = 'knowme-sdk-bridge'
@@ -103,6 +104,7 @@ export function apply(ctx: BridgePluginContext, config: JsonRpcConfig): void {
     ...(loader === undefined ? {} : { loader }),
     ...(sessionProjections === undefined ? {} : { sessionProjections }),
     resolvePermissionPresets: () => ctx.get('permissionPresets') as PermissionPresetsLike | undefined,
+    resolveAgentPresets: () => ctx.get('agentPresets') as AgentPresetsLike | undefined,
     resolveApprovalService: () => ctx.get('approval') as ApprovalServiceLike | undefined,
     resolveCommands: () => ctx.get('commands') as CommandsServiceLike | undefined,
     notify: (method, params) => { transport.notify(method, params) },
@@ -134,6 +136,7 @@ export function apply(ctx: BridgePluginContext, config: JsonRpcConfig): void {
     agents: ctx.agents as SessionLifecycleDeps['agents'],
     sessions: ctx.get('sessions') as SessionLifecycleDeps['sessions'],
     persistence: ctx.get('sessionPersistence') as SessionLifecycleDeps['persistence'],
+    resolveAgentPresets: () => ctx.get('agentPresets') as ReturnType<NonNullable<SessionLifecycleDeps['resolveAgentPresets']>>,
   }
 
   transport.onRequest(async (method, params) => {

@@ -43,7 +43,7 @@ export function fakeBridgeDeps(over: Partial<BridgeDeps> = {}): FakeBridgeHarnes
     notifications,
     installs,
     makeAgent(id: string, events: SessionEventLike[] = []): AgentLike {
-      const agent: AgentLike = { id, session: { id, events }, ctx: {} }
+      const agent: AgentLike = { id, session: { id, events, append: () => undefined }, ctx: {} }
       agents.set(id, agent)
       return agent
     },

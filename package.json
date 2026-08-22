@@ -34,6 +34,7 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-agent": "^0.1.0-rc.8",
+    "@deepseek-ai/dsh-agent-presets": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-sdk-jsonrpc-server": "^0.1.0-rc.8",
     "@deepseek-ai/dsh-sdk-protocol": "^0.1.0-rc.8",
@@ -46,6 +47,9 @@
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-agent": {
       "optional": false
+    },
+    "@deepseek-ai/dsh-agent-presets": {
+      "optional": true
     },
     "@deepseek-ai/dsh-sdk-jsonrpc-server": {
       "optional": false
@@ -69,6 +73,7 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-agent": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-agent-presets": "0.1.0-rc.8",
     "@deepseek-ai/dsh-llm": "0.1.0-rc.8",
     "@deepseek-ai/dsh-permission-presets": "0.1.0-rc.8",
     "@deepseek-ai/dsh-sdk-jsonrpc-server": "0.1.0-rc.8",

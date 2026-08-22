@@ -22,6 +22,19 @@ export const inject = ['agents']
 export function apply(ctx) {
   const fired = new Set()
 
+  ctx.effect(() => {
+    if (process.env.KNOWME_SPIKE_CREATE_BLANK !== '1') return
+    setTimeout(() => {
+      void ctx.agents.create({
+        sessionId: 'preset-blank',
+        meta: { cwd: process.env.KNOWME_SPIKE_CWD ?? process.cwd() },
+        agentOptions: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+      }).catch((error) => {
+        process.stderr.write(`[spike] blank agent create failed: ${String(error)}\n`)
+      })
+    }, 0)
+  }, 'knowme-spike-trigger.blank-agent')
+
   ctx.on('agent/pre-step', async (payload, next) => {
     const agent = payload.agent
     const text = JSON.stringify(agent.session.events)

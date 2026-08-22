@@ -31,6 +31,7 @@ export const REQUIRED_SERVICES = [
   'loader', // cordis-plugin-loader entry tree for knowme/listPlugins (soft-probed; absent → empty list)
   'sessionProjections', // per-session token/context telemetry for knowme/sessionStats (soft-probed; absent → empty snapshot)
   'permissionPresets', // sandbox/approval preset get/set for knowme/permission.* (soft-probed; absent → permission-unavailable / empty)
+  'agentPresets', // agent mode roster/recompose for knowme/agentPreset.* (soft-probed; absent → empty read / invalid set)
   'commands', // slash-command list/execute for knowme/commands.* (soft-probed, resolved lazily per call; absent → commands-unavailable / empty)
 ] as const
 
@@ -45,6 +46,8 @@ export const BRIDGE_METHODS = {
   sessionStats: 'knowme/sessionStats',
   permissionGet: 'knowme/permission.get',
   permissionSet: 'knowme/permission.set',
+  agentPresetGet: 'knowme/agentPreset.get',
+  agentPresetSet: 'knowme/agentPreset.set',
   commandsList: 'knowme/commands.list',
   commandsExecute: 'knowme/commands.execute',
 } as const
@@ -71,6 +74,10 @@ export const ERROR_NAMES = {
   unknownPreset: 'unknown-preset',
   permissionLocked: 'permission-locked',
   permissionWriteFailed: 'permission-write-failed',
+  agentPresetLocked: 'agent-preset-locked',
+  agentPresetNotFound: 'agent-preset-not-found',
+  agentPresetInvalid: 'agent-preset-invalid',
+  agentPresetAppendFailed: 'agent-preset-append-failed',
   commandsUnavailable: 'commands-unavailable',
   unknownCommand: 'unknown-command',
   commandFailed: 'command-failed',
@@ -168,6 +175,18 @@ export interface DshSessionStats {
 export interface DshPermission {
   readonly preset: string | null
   readonly options: readonly { readonly value: string; readonly name: string; readonly description?: string }[]
+}
+
+/**
+ * A dsh session's agent preset snapshot for `knowme/agentPreset.get` — the
+ * current composition id, live roster, default, and whether the blank-only
+ * switch is locked by a recorded turn.
+ */
+export interface DshAgentPreset {
+  readonly preset: string | null
+  readonly options: readonly { readonly value: string; readonly name: string; readonly description?: string }[]
+  readonly default: string | null
+  readonly locked: boolean
 }
 
 /**

@@ -130,6 +130,15 @@
         sandbox: danger-full-access
         approval: never
 
+- id: agent-presets
+  name: '@deepseek-ai/dsh-agent-presets'
+  config:
+    default: standard
+    includeUserRoot: false
+    roots:
+      - path: __PRESET_ROOT__
+        trust: system
+
 - id: user-questions
   name: '@deepseek-ai/dsh-user-questions'
 

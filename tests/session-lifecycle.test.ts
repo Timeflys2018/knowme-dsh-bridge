@@ -12,28 +12,34 @@ interface Fakes {
   deps: SessionLifecycleDeps
   created: string[]
   resumed: string[]
+  setupCalls: Array<() => Promise<void>>
+  mounted: string[]
   live: Map<string, ReturnType<typeof makeAgent>>
-  persisted: Map<string, { meta: { id: string; cwd: string; agentPreset?: string } }>
+  persisted: Map<string, { meta: { id: string; cwd: string; agentPreset?: string }; events?: readonly { type: string; data: unknown }[] }>
 }
 
-function makeFakes(over: Partial<{ inspectThrows: boolean }> = {}): Fakes {
+function makeFakes(over: Partial<{ inspectThrows: boolean; mountThrows: boolean; noAgentPresets: boolean }> = {}): Fakes {
   const created: string[] = []
   const resumed: string[] = []
+  const setupCalls: Array<() => Promise<void>> = []
+  const mounted: string[] = []
   const live = new Map<string, ReturnType<typeof makeAgent>>()
-  const persisted = new Map<string, { meta: { id: string; cwd: string; agentPreset?: string } }>()
-  const deps: SessionLifecycleDeps = {
+  const persisted = new Map<string, { meta: { id: string; cwd: string; agentPreset?: string }; events?: readonly { type: string; data: unknown }[] }>()
+  const deps = {
     agents: {
       get: (id: string) => live.get(String(id))?.agent,
-      create: async (opts: { sessionId: unknown; meta: { cwd: string } }) => {
+      create: async (opts: { sessionId: unknown; meta: { cwd: string }; setup?: (agentCtx: object) => Promise<void> }) => {
         const id = String(opts.sessionId)
         created.push(id)
+        if (opts.setup !== undefined) setupCalls.push(() => opts.setup?.({}) ?? Promise.resolve())
         const a = makeAgent(id)
         live.set(id, a)
         return a
       },
-      resume: async (opts: { resumeSessionId: unknown }) => {
+      resume: async (opts: { resumeSessionId: unknown; setup?: (agentCtx: object) => Promise<void> }) => {
         const id = String(opts.resumeSessionId)
         resumed.push(id)
+        if (opts.setup !== undefined) setupCalls.push(() => opts.setup?.({}) ?? Promise.resolve())
         const a = makeAgent(id)
         live.set(id, a)
         return a
@@ -46,11 +52,27 @@ function makeFakes(over: Partial<{ inspectThrows: boolean }> = {}): Fakes {
         if (over.inspectThrows === true) throw new Error('SessionPersistenceCorruptionError: torn log')
         const p = persisted.get(String(id))
         if (p === undefined) throw new Error('not found')
-        return { meta: p.meta, events: [] }
+        return { meta: p.meta, events: p.events ?? [] }
       },
     },
-  }
-  return { deps, created, resumed, live, persisted }
+    ...(over.noAgentPresets === true
+      ? {}
+      : {
+          resolveAgentPresets: () => ({
+            defaultId: 'standard',
+            resolve: async (id?: string) => ({ id: id ?? 'standard' }),
+            mount: async (_agentCtx: object, id?: string) => {
+              if (over.mountThrows === true && id !== 'standard') {
+                const error = new Error(`unknown preset ${id}`)
+                error.name = 'UnknownPresetError'
+                throw error
+              }
+              mounted.push(id ?? 'standard')
+            },
+          }),
+        }),
+  } as SessionLifecycleDeps
+  return { deps, created, resumed, setupCalls, mounted, live, persisted }
 }
 
 const OPTS = { provider: 'mify', model: 'zhipuai/glm-5.2' as string }
@@ -115,11 +137,50 @@ describe('resolvePromptAgent — three-state session gate (mirror apiproxy)', ()
     expect(f.resumed).toEqual([])
   })
 
-  it('NIT: persisted session with a stored preset → throws preset-resume-unsupported', async () => {
+  it('resumed session with a selected preset mounts that preset during setup', async () => {
     const f = makeFakes()
-    f.persisted.set('s8', { meta: { id: 's8', cwd: '/proj', agentPreset: 'some-roster' } })
-    await expect(resolvePromptAgent(f.deps, { sessionId: 's8', cwd: '/proj', agentOptions: OPTS })).rejects.toThrow(/preset/i)
-    expect(f.resumed).toEqual([])
+    f.persisted.set('s8', {
+      meta: { id: 's8', cwd: '/proj' },
+      events: [{ type: 'agent-preset/selected', data: { agentPreset: 'minimal' } }],
+    })
+    await resolvePromptAgent(f.deps, { sessionId: 's8', cwd: '/proj', agentOptions: OPTS })
+    expect(f.resumed).toEqual(['s8'])
+
+    await f.setupCalls[0]?.()
+
+    expect(f.mounted).toEqual(['minimal'])
+  })
+
+  it('new session mounts the default preset during create setup', async () => {
+    const f = makeFakes()
+    await resolvePromptAgent(f.deps, { sessionId: 's8-create', cwd: '/proj', agentOptions: OPTS })
+    expect(f.created).toEqual(['s8-create'])
+
+    await f.setupCalls[0]?.()
+
+    expect(f.mounted).toEqual(['standard'])
+  })
+
+  it('no agentPresets roster composes no setup and still resumes', async () => {
+    const f = makeFakes({ noAgentPresets: true })
+    f.persisted.set('s8-bare', { meta: { id: 's8-bare', cwd: '/proj' } })
+    await resolvePromptAgent(f.deps, { sessionId: 's8-bare', cwd: '/proj', agentOptions: OPTS })
+    expect(f.resumed).toEqual(['s8-bare'])
+    expect(f.setupCalls).toEqual([])
+    expect(f.mounted).toEqual([])
+  })
+
+  it('missing stored preset falls back to default during setup and resume succeeds', async () => {
+    const f = makeFakes({ mountThrows: true })
+    f.persisted.set('s8-missing', {
+      meta: { id: 's8-missing', cwd: '/proj' },
+      events: [{ type: 'agent-preset/selected', data: { agentPreset: 'minimal' } }],
+    })
+    await resolvePromptAgent(f.deps, { sessionId: 's8-missing', cwd: '/proj', agentOptions: OPTS })
+
+    await f.setupCalls[0]?.()
+
+    expect(f.mounted).toEqual(['standard'])
   })
 
   it('W3: concurrent same-id prompts share ONE create/resume (dedup)', async () => {
