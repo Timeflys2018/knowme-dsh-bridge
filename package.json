@@ -1,11 +1,13 @@
 {
   "name": "@knowme/dsh-bridge",
   "description": "B3-small wire-bridge cordis plugin: exposes the interaction-control methods (selectModel / approval-respond / question-respond) the DeepSeek Harness stdio SDK surface omits, so an out-of-process host (KnowMe) can drive dsh without restarting the runtime.",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0-rc.8",
   "type": "module",
   "license": "MIT",
   "author": "Timeflys2018",
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Timeflys2018/knowme-dsh-bridge.git"
@@ -22,6 +24,7 @@
   "files": [
     "lib/**/*.js",
     "lib/types/**/*.d.ts",
+    "cordis.patch.yml",
     "cordis.example.yml"
   ],
   "scripts": {
