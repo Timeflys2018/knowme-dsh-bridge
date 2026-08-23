@@ -29,7 +29,7 @@ const require = createRequire(import.meta.url)
 const here = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
 
-const PINNED = '0.1.0-rc.8'
+const PINNED = '0.1.1-rc.2'
 
 const failures = []
 const check = (ok, label) => {
