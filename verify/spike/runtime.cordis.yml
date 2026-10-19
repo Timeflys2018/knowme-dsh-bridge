@@ -1,0 +1,195 @@
+# Spike plugin tree (dsh 0.2), included by cordis.yml. dsh 0.2 resolves bare
+# plugin names beside the config file that declares them; the driver copies
+# cordis.yml into a per-tier tmp dir, so the tree lives here, beside the spike's
+# node_modules. Run-specific config (snapshot, sessions root, cwd) is patched in
+# by cordis.yml, where the driver substitutes its placeholders.
+# Baseline: dsh examples/jsonrpc-agent with llm-deepseek → llm-replay,
+# sdk-jsonrpc-server → knowme-dsh-bridge, plus approval/user-questions and the
+# spike trigger fixture. Stdout is reserved for JSON-RPC; diagnostics go to stderr.
+
+- id: llm-replay
+  name: '@deepseek-ai/dsh-llm-replay'
+  # config: patched by cordis.yml (__SNAPSHOT__)
+
+- id: subprocess
+  name: '@deepseek-ai/dsh-subprocess-local'
+
+# Confining shell stack (mirrors dsh-base): permission-presets refuses to compose
+# over an unconfined executor, so T6/T6b need the same sandbox-local → sandbox-policy
+# → bash-sandbox chain the real knowme-sdk profile boots. bash-sandbox registers as
+# ctx.shell and supplies the sandboxMode the presets service reads.
+- id: sandbox
+  name: '@deepseek-ai/dsh-sandbox-local'
+
+- id: sandbox-policy
+  name: '@deepseek-ai/dsh-sandbox-policy'
+  # config: patched by cordis.yml (__CWD__)
+
+- id: bash-sandbox
+  name: '@deepseek-ai/dsh-bash-sandbox'
+  config:
+    timeoutMs: 60000
+
+# Mandatory agent kernel (0.2: agent-spine-demo deleted without alias; rows
+# mirror dsh-sdk-minimal's explicit kernel order).
+- id: timer
+  name: '@deepseek-ai/cordis-plugin-timer'
+
+- id: llm
+  name: '@deepseek-ai/dsh-llm'
+
+- id: session
+  name: '@deepseek-ai/dsh-session'
+
+- id: session-title
+  name: '@deepseek-ai/dsh-session-title'
+  config:
+    fallbackMaxWords: 5
+    fallbackMaxBytes: 40
+    maxTitleBytes: 80
+
+- id: system-prompt
+  name: '@deepseek-ai/dsh-system-prompt'
+  config:
+    includeHarnessIdentity: false
+    includeRuntimeContext: false
+    personaPrefix: 'You are the knowme-dsh-bridge verification spike.'
+
+- id: tools
+  name: '@deepseek-ai/dsh-tools'
+
+- id: mcp-resources
+  name: '@deepseek-ai/dsh-mcp-resources'
+
+- id: agent
+  name: '@deepseek-ai/dsh-agent'
+
+- id: llm-retry
+  name: '@deepseek-ai/dsh-llm-retry'
+
+- id: jobs
+  name: '@deepseek-ai/dsh-jobs-local'
+
+- id: agent-loop
+  name: '@deepseek-ai/dsh-agent-loop'
+  config:
+    agents: []
+
+- id: sessions
+  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  # config: patched by cordis.yml (__SESSIONS__)
+
+- id: session-checkpoints
+  name: '@deepseek-ai/dsh-session-checkpoint-policy'
+
+- id: subagent
+  name: '@deepseek-ai/dsh-subagent'
+
+- id: subagent-spawn-in-process
+  name: '@deepseek-ai/dsh-subagent-spawn-in-process'
+  config:
+    providerName: spawn
+
+- id: tool-subagent
+  name: '@deepseek-ai/dsh-tool-subagent'
+  config:
+    provider: spawn
+    toolName: subagent
+    enableRunInBackground: false
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+- id: fs-local
+  name: '@deepseek-ai/dsh-fs-local'
+  # config: patched by cordis.yml (__CWD__)
+
+- id: fs-observation-policy
+  name: '@deepseek-ai/dsh-fs-observation-policy'
+
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: working-directory
+  name: '@deepseek-ai/dsh-working-directory'
+
+- id: tool-working-directory
+  name: '@deepseek-ai/dsh-tool-working-directory'
+
+- id: session-projection
+  name: '@deepseek-ai/dsh-session-projection'
+
+- id: token-meter
+  name: '@deepseek-ai/dsh-token-meter'
+
+- id: session-stats
+  name: '@deepseek-ai/dsh-session-stats'
+
+- id: compaction-basic
+  name: '@deepseek-ai/dsh-compaction-basic'
+  config:
+    thresholdRatio: 0.8
+    retainRatio: 0.16
+    maxTokens: 8192
+    compactionRetries: 1
+
+# --- bridge surfaces (composed BEFORE the bridge entry) ---
+
+- id: approval
+  name: '@deepseek-ai/dsh-user-approval'
+
+- id: permission-presets
+  name: '@deepseek-ai/dsh-permission-presets'
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+
+# 0.2: the registry is only the `agentPresets` service; each preset is its own
+# inline `dsh-agent-preset` declaration (no root scan).
+- id: agent-preset-registry
+  name: '@deepseek-ai/dsh-agent-preset-registry'
+  config:
+    default: standard
+
+- id: preset-standard
+  name: '@deepseek-ai/dsh-agent-preset'
+  config:
+    id: standard
+    name: Standard
+    description: Spike standard preset (no extra plugins).
+    plugins: []
+
+- id: preset-minimal
+  name: '@deepseek-ai/dsh-agent-preset'
+  config:
+    id: minimal
+    name: Minimal
+    description: Spike minimal preset (no extra plugins).
+    plugins: []
+
+- id: user-questions
+  name: '@deepseek-ai/dsh-user-questions'
+
+- id: commands
+  name: '@deepseek-ai/dsh-commands'
+
+- id: command-compact
+  name: '@deepseek-ai/dsh-command-compact'
+
+- id: spike-trigger
+  name: '@knowme/spike-trigger'
+
+# --- the SDK entry: single transport owner (replaces sdk-jsonrpc-server) ---
+
+- id: knowme-bridge
+  name: 'knowme-dsh-bridge'

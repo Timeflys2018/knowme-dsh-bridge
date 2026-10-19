@@ -37,7 +37,7 @@ export function apply(ctx) {
 
   ctx.on('agent/pre-step', async (payload, next) => {
     const agent = payload.agent
-    const text = JSON.stringify(agent.session.events)
+    const text = JSON.stringify(agent.session.snapshotEvents())
     const shouldFire = (marker) => {
       if (!text.includes(marker) || fired.has(marker + agent.id)) return false
       fired.add(marker + agent.id)

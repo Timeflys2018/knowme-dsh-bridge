@@ -196,7 +196,7 @@ describe('knowme/permission.get + set — permission-presets exposure', () => {
   ]
   function projections(currentValue: string | undefined): SessionProjectionsLike {
     return {
-      snapshot: () => ({ values: currentValue === undefined ? {} : { permissions: { options: OPTIONS, currentValue } } }),
+      snapshot: () => ({ values: currentValue === undefined ? {} : { permissions: { currentValue } } }),
     }
   }
   function presets(over: Partial<PermissionPresetsLike> = {}): PermissionPresetsLike {
@@ -207,12 +207,13 @@ describe('knowme/permission.get + set — permission-presets exposure', () => {
         throw new Error(`unknown preset "${name}"`)
       },
       set: () => undefined,
+      catalog: () => ({ options: OPTIONS }),
       ...over,
     }
   }
 
-  it('get maps the permissions projection to {preset, options}', async () => {
-    const h = fakeBridgeDeps({ sessionProjections: projections('workspace-write') })
+  it('get maps the permissions projection currentValue + service catalog options to {preset, options}', async () => {
+    const h = fakeBridgeDeps({ sessionProjections: projections('workspace-write'), resolvePermissionPresets: () => presets() })
     h.makeAgent('s1')
     const bridge = createBridge(h.deps)
     const r = (await bridge.handleRequest(BRIDGE_METHODS.permissionGet, { sessionId: 's1' })) as DshPermission
@@ -220,7 +221,7 @@ describe('knowme/permission.get + set — permission-presets exposure', () => {
   })
 
   it('get degrades to {preset:null, options:[]} when the permissions projection is absent', async () => {
-    const h = fakeBridgeDeps({ sessionProjections: projections(undefined) })
+    const h = fakeBridgeDeps({ sessionProjections: projections(undefined), resolvePermissionPresets: () => presets() })
     h.makeAgent('s1')
     const bridge = createBridge(h.deps)
     const r = (await bridge.handleRequest(BRIDGE_METHODS.permissionGet, { sessionId: 's1' })) as DshPermission

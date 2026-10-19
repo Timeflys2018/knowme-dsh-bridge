@@ -44,7 +44,7 @@ function makePresetHarness(events: readonly SessionEventLike[] = [], over: Parti
   const recomposeCalls: string[] = []
   const session = {
     id: 's1',
-    events,
+    snapshotEvents: () => events,
     append: (type: string, data: unknown) => { appendCalls.push({ type, data }) },
   }
   const agent = { id: 's1', session, ctx: {} } as AgentLike
@@ -96,7 +96,7 @@ describe('knowme/agentPreset.get — mode snapshot from agentPresets', () => {
   })
 
   it('degrades to an empty unlocked snapshot when service or live agent is absent', async () => {
-    const noService = createBridge({ agents: { get: () => ({ id: 's1', session: { id: 's1', events: [] }, ctx: {} } as AgentLike) }, notify: () => undefined })
+    const noService = createBridge({ agents: { get: () => ({ id: 's1', session: { id: 's1', snapshotEvents: () => [] }, ctx: {} } as AgentLike) }, notify: () => undefined })
     await expect(noService.handleRequest(AGENT_PRESET_GET, { sessionId: 's1' })).resolves.toEqual({
       preset: null,
       options: [],
@@ -161,7 +161,7 @@ describe('knowme/agentPreset.set — blank-only serialized recompose', () => {
   it('maps an append failure after successful recompose to agent-preset-append-failed', async () => {
     const agent = {
       id: 's1',
-      session: { id: 's1', events: [], append: () => { throw new Error('deep freeze rejected') } },
+      session: { id: 's1', snapshotEvents: () => [], append: () => { throw new Error('deep freeze rejected') } },
       ctx: {},
     } as AgentLike
     const deps = {
@@ -182,7 +182,7 @@ describe('knowme/agentPreset.set — blank-only serialized recompose', () => {
     const noAgent = createBridge({ agents: { get: () => undefined }, resolveAgentPresets: () => makePresetHarness().service, notify: () => undefined } as BridgeDeps)
     await expect(noAgent.handleRequest(AGENT_PRESET_SET, { sessionId: 'ghost', preset: 'minimal' })).rejects.toThrow(/session-not-found/)
 
-    const noService = createBridge({ agents: { get: () => ({ id: 's1', session: { id: 's1', events: [] }, ctx: {} } as AgentLike) }, notify: () => undefined })
+    const noService = createBridge({ agents: { get: () => ({ id: 's1', session: { id: 's1', snapshotEvents: () => [] }, ctx: {} } as AgentLike) }, notify: () => undefined })
     await expect(noService.handleRequest(AGENT_PRESET_SET, { sessionId: 's1', preset: 'minimal' })).rejects.toThrow(/agent-preset-invalid/)
   })
 
@@ -208,7 +208,7 @@ describe('knowme/agentPreset.set — blank-only serialized recompose', () => {
     }
     const session = {
       id: 's1',
-      events: [] as SessionEventLike[],
+      snapshotEvents: () => [] as SessionEventLike[],
       append: (type: string, data: unknown) => { calls.push(`append:${type}:${JSON.stringify(data)}`) },
     }
     const agent = { id: 's1', session, ctx: {} } as AgentLike

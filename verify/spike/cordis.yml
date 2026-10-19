@@ -1,157 +1,50 @@
-# Spike deployment: real dsh runtime, keyless replay LLM, bridge as the single
-# SDK entry. Baseline copied from dsh examples/jsonrpc-agent/cordis.yml with
-# llm-deepseek → llm-replay, sdk-jsonrpc-server → knowme-dsh-bridge, plus the
-# approval/user-questions services and the spike trigger fixture.
-# Stdout is reserved for JSON-RPC; diagnostics go to stderr.
+# Spike deployment root (dsh 0.2): real dsh runtime, keyless replay LLM, bridge
+# as the single SDK entry.
+#
+# The driver substitutes __SNAPSHOT__/__SESSIONS__/__CWD__ and writes this file
+# into a per-tier tmp dir. dsh 0.2 resolves bare plugin names beside the config
+# file that declares them, so the plugin tree itself lives in the spike-local
+# runtime.cordis.yml (resolving against the spike's node_modules) and this root
+# only mounts it, patching in the run-specific config.
 
-- id: llm-replay
-  name: '@deepseek-ai/dsh-llm-replay'
+- id: spike-runtime
+  name: cordis:include
   config:
-    # Paced delivery keeps a turn OPEN long enough for T3b to park an approval
-    # mid-turn and shutdown before turn/end — the production shape (a real ask
-    # blocks its tool call, so the turn cannot close over a parked ask).
-    paceMs: 200
-    file: __SNAPSHOT__
-    childFiles: [__SNAPSHOT__]
-    providers:
-      - id: deepseek-official
-        name: DeepSeek
-        models:
-          - id: deepseek-v4-flash
-            contextWindow: 128000
-          - id: deepseek-v4-pro
-            contextWindow: 128000
-
-- id: subprocess
-  name: '@deepseek-ai/dsh-subprocess-local'
-
-# Confining shell stack (mirrors dsh-base): permission-presets refuses to compose
-# over an unconfined executor, so T6/T6b need the same sandbox-local → sandbox-policy
-# → bash-sandbox chain the real knowme-sdk profile boots. bash-sandbox registers as
-# ctx.shell and supplies the sandboxMode the presets service reads.
-- id: sandbox
-  name: '@deepseek-ai/dsh-sandbox-local'
-
-- id: sandbox-policy
-  name: '@deepseek-ai/dsh-sandbox-policy'
-  config:
-    mode: 'workspace-write'
-    workspaceRoot: __CWD__
-
-- id: bash-sandbox
-  name: '@deepseek-ai/dsh-bash-sandbox'
-  config:
-    timeoutMs: 60000
-
-- id: agent-spine
-  name: '@deepseek-ai/dsh-agent-spine-demo'
-  config:
-    persona: 'You are the knowme-dsh-bridge verification spike.'
-    workspaceContext: false
-    skills:
-      enabled: false
-    toolBash:
-      enableRunInBackground: false
-    toolJobs: false
-
-- id: sessions
-  name: '@deepseek-ai/dsh-session-persistence-jsonl'
-  config:
-    root: __SESSIONS__
-    compression: none
-
-- id: session-checkpoints
-  name: '@deepseek-ai/dsh-session-checkpoint-policy'
-
-- id: subagent
-  name: '@deepseek-ai/dsh-subagent'
-
-- id: subagent-spawn-in-process
-  name: '@deepseek-ai/dsh-subagent-spawn-in-process'
-  config:
-    providerName: spawn
-
-- id: tool-subagent
-  name: '@deepseek-ai/dsh-tool-subagent'
-  config:
-    provider: spawn
-    toolName: subagent
-    enableRunInBackground: false
-
-- id: tool-todo
-  name: '@deepseek-ai/dsh-tool-todo'
-  config:
-    allowParallelInProgress: true
-
-- id: fs-local
-  name: '@deepseek-ai/dsh-fs-local'
-  config:
-    cwd: __CWD__
-
-- id: fs-observation-policy
-  name: '@deepseek-ai/dsh-fs-observation-policy'
-
-- id: tool-fs
-  name: '@deepseek-ai/dsh-tool-fs'
-
-- id: session-projection
-  name: '@deepseek-ai/dsh-session-projection'
-
-- id: token-meter
-  name: '@deepseek-ai/dsh-token-meter'
-
-- id: session-stats
-  name: '@deepseek-ai/dsh-session-stats'
-
-- id: compaction-basic
-  name: '@deepseek-ai/dsh-compaction-basic'
-  config:
-    thresholdRatio: 0.8
-    retainRatio: 0.16
-    maxTokens: 8192
-    compactionRetries: 1
-
-# --- bridge surfaces (composed BEFORE the bridge entry) ---
-
-- id: approval
-  name: '@deepseek-ai/dsh-user-approval'
-
-- id: permission-presets
-  name: '@deepseek-ai/dsh-permission-presets'
-  config:
-    presets:
-      read-only:
-        sandbox: read-only
-        approval: ask
-      workspace-write:
-        sandbox: workspace-write
-        approval: ask
-      danger-full-access:
-        sandbox: danger-full-access
-        approval: never
-
-- id: agent-presets
-  name: '@deepseek-ai/dsh-agent-presets'
-  config:
-    default: standard
-    includeUserRoot: false
-    roots:
-      - path: __PRESET_ROOT__
-        trust: system
-
-- id: user-questions
-  name: '@deepseek-ai/dsh-user-questions'
-
-- id: commands
-  name: '@deepseek-ai/dsh-commands'
-
-- id: command-compact
-  name: '@deepseek-ai/dsh-command-compact'
-
-- id: spike-trigger
-  name: '@knowme/spike-trigger'
-
-# --- the SDK entry: single transport owner (replaces sdk-jsonrpc-server) ---
-
-- id: knowme-bridge
-  name: 'knowme-dsh-bridge'
+    # __PRESET_ROOT__ is the driver's only spike-dir directory anchor
+    # (<spike>/presets); its parent is the spike dir. Include config is not
+    # `!!js`-interpolated, so the path must be a substituted literal.
+    path: __PRESET_ROOT__/../runtime.cordis.yml
+    patches:
+      - id: llm-replay
+        config:
+          # Paced delivery keeps a turn OPEN long enough for T3b to park an approval
+          # mid-turn and shutdown before turn/end — the production shape (a real ask
+          # blocks its tool call, so the turn cannot close over a parked ask).
+          paceMs: 200
+          # dsh 0.2's replay decodes v0 logs strictly (dense seq from 0, exact
+          # chunk references). fixtures/two-turn.session.jsonl (0.1-era, kept as
+          # recorded) carries non-dense seqs, so the replay reads its projected
+          # copy replay/two-turn.session.jsonl: identical rows with seq/time
+          # dropped (the replay assigns dense seqs) and each assistant/message
+          # sourceEventSeqs recomputed against that numbering.
+          file: __PRESET_ROOT__/../replay/two-turn.session.jsonl
+          childFiles: [__PRESET_ROOT__/../replay/two-turn.session.jsonl]
+          providers:
+            - id: deepseek-official
+              name: DeepSeek
+              models:
+                - id: deepseek-v4-flash
+                  contextWindow: 128000
+                - id: deepseek-v4-pro
+                  contextWindow: 128000
+      - id: sandbox-policy
+        config:
+          mode: 'workspace-write'
+          workspaceRoot: __CWD__
+      - id: sessions
+        config:
+          root: __SESSIONS__
+          compression: none
+      - id: fs-local
+        config:
+          cwd: __CWD__

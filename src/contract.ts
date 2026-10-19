@@ -8,7 +8,7 @@
  */
 
 /** dsh version line this bridge is validated against. */
-export const PINNED_DSH_VERSION = '0.1.1-rc.2'
+export const PINNED_DSH_VERSION = '0.2.1-rc.2'
 
 /**
  * The dsh runtime cordis services this bridge reads.

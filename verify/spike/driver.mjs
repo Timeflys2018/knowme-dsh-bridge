@@ -138,7 +138,7 @@ class SpikeRun {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = join(dir, entry.name)
         if (entry.isDirectory()) walk(full)
-        else if (entry.name === 'session.jsonl') paths.push(full)
+        else if (/^session(\.v\d+)?\.jsonl$/.test(entry.name)) paths.push(full)
       }
     }
     walk(root)

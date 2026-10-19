@@ -50,10 +50,13 @@ export interface SessionLifecycleDeps {
   readonly sessions: { get: (id: unknown) => unknown }
   readonly persistence:
     | {
-        list: () => Promise<readonly { readonly id: string; readonly cwd?: string; readonly agentPreset?: string }[]>
-        inspect: (id: unknown) => Promise<{
-          readonly meta: { readonly id: string; readonly cwd?: string; readonly agentPreset?: string }
-          readonly events?: readonly SessionEventLike[]
+        // dsh 0.2 SessionPersistenceSnapshot carries its id/cwd/agentPreset under .header (SessionHeader),
+        // NOT at the top level. dsh 0.2 ALSO removed inspect(); a stored session's events are now read
+        // through open(id,'read') → handle.read().events → handle.close() (SessionPersistence 0.2 API).
+        list: () => Promise<readonly { readonly header: { readonly id: string; readonly cwd?: string; readonly agentPreset?: string } }[]>
+        open: (id: unknown, access: 'read' | 'write') => Promise<{
+          read: () => Promise<{ readonly events: readonly SessionEventLike[] }>
+          close: () => Promise<void>
         }>
       }
     | undefined
@@ -105,25 +108,31 @@ async function resolveColdAgent(deps: SessionLifecycleDeps, input: ResolvePrompt
     throw new Error(`initialize required before session/prompt (session "${sessionId}")`)
   }
 
-  const persisted = deps.persistence === undefined ? undefined : (await deps.persistence.list()).find((h) => h.id === sessionId)
+  const persisted = deps.persistence === undefined ? undefined : (await deps.persistence.list()).find((h) => h.header.id === sessionId)
   if (persisted !== undefined && deps.persistence !== undefined) {
-    // inspect first: reads the header for the cwd/preset guards and surfaces a torn-log corruption error
-    // BEFORE we attempt resume. W2: a corruption here propagates as a clean error — we do NOT fall back
-    // to create (a silent fresh-create would re-introduce the id-collision/history-loss class + mask it).
-    const inspected = await deps.persistence.inspect(SessionId(sessionId))
-    const storedCwd = inspected.meta.cwd
+    // Guard on the listed header for the cwd conflict BEFORE resume. W2: a torn-log corruption surfaces
+    // from open()/read() below as a clean error — we do NOT fall back to create (a silent fresh-create
+    // would re-introduce the id-collision/history-loss class + mask it).
+    const storedCwd = persisted.header.cwd
     if (storedCwd !== undefined && storedCwd !== cwd) {
       throw new Error(`session "${sessionId}" cwd conflict: persisted "${storedCwd}" != requested "${cwd}"`)
     }
-    const handle = await deps.agents.resume({
+    const handle = await deps.persistence.open(SessionId(sessionId), 'read')
+    let events: readonly SessionEventLike[]
+    try {
+      events = (await handle.read()).events
+    } finally {
+      await handle.close()
+    }
+    const resumeHandle = await deps.agents.resume({
       resumeSessionId: SessionId(sessionId),
       agentOptions,
       ...composeAgentSetup(deps, {
-        header: inspected.meta.agentPreset === undefined ? {} : { agentPreset: inspected.meta.agentPreset },
-        events: inspected.events ?? [],
+        header: persisted.header.agentPreset === undefined ? {} : { agentPreset: persisted.header.agentPreset },
+        events,
       }),
     })
-    return { agent: handle.agent, created: false }
+    return { agent: resumeHandle.agent, created: false }
   }
 
   // Create: compose under the caller-chosen preset (Change 4b) if any, else the default. TWO things must

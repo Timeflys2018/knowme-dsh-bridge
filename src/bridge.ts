@@ -39,16 +39,16 @@ export interface SessionEventLike {
   readonly data: unknown
 }
 
-export interface AgentLike {
-  readonly id: string
-  readonly session: {
-    readonly id: string
-    readonly header?: { readonly agentPreset?: string }
-    readonly events: readonly SessionEventLike[]
-    append<T extends string>(type: T, data: unknown): unknown
-  }
-  readonly ctx: object
-}
+ export interface AgentLike {
+   readonly id: string
+   readonly session: {
+     readonly id: string
+     readonly header?: { readonly agentPreset?: string }
+     snapshotEvents(): readonly SessionEventLike[]
+     append<T extends string>(type: T, data: unknown): unknown
+   }
+   readonly ctx: object
+ }
 
 export interface LlmRouteConfig {
   readonly provider: string
@@ -138,7 +138,7 @@ export interface SessionStatsProjectionLike {
 }
 
 export interface PermissionSelectLike {
-  readonly options: readonly { readonly value: string; readonly name: string; readonly description?: string }[]
+  readonly options?: readonly { readonly value: string; readonly name: string; readonly description?: string }[]
   readonly currentValue: string
 }
 
@@ -159,6 +159,9 @@ export interface SessionProjectionsLike {
 export interface PermissionPresetsLike {
   resolve(name: string): { readonly sandbox: string; readonly approval: string }
   set(session: object, name: string): void
+  // dsh 0.2 moved the per-preset option catalog (value/name/description) off the session projection view
+  // (which now carries only currentValue) onto the service. knowme/permission.get reads options from here.
+  catalog?(): { readonly options: readonly { readonly value: string; readonly name: string; readonly description?: string }[] }
   // Session-independent profile defaults for knowme/defaults.get. `names` is the switchable preset ids
   // (declaration order); `defaultPreset` is the preset a fresh session gets. Both are already public on
   // dsh's PermissionPresetService (getters, settings-backed) — read WITHOUT a live session.
@@ -341,8 +344,14 @@ export function resolveSessionPresetFromEvents(session: { readonly header?: { re
   return session.header?.agentPreset
 }
 
-function sessionHasTurnStart(session: { readonly events: readonly SessionEventLike[] }): boolean {
-  return session.events.some((event) => event.type === 'turn/start')
+function sessionHasTurnStart(events: readonly SessionEventLike[]): boolean {
+  return events.some((event) => event.type === 'turn/start')
+}
+
+// dsh 0.2 made Session.events a method (snapshotEvents()); the pure resolvers take a plain
+// array, so read the live session's events once here and adapt to their structural shape.
+function liveSessionView(session: AgentLike['session']): { readonly header?: { readonly agentPreset?: string }; readonly events: readonly SessionEventLike[] } {
+  return { ...(session.header === undefined ? {} : { header: session.header }), events: session.snapshotEvents() }
 }
 
 function isPresetError(error: unknown, name: string): boolean {
@@ -576,7 +585,8 @@ export function createBridge(deps: BridgeDeps): Bridge {
     if (projections === undefined || agent === undefined) return empty
     const perm = projections.snapshot(agent.session).values.permissions
     if (perm === undefined) return empty
-    return { preset: perm.currentValue, options: perm.options.map((o) => ({ value: o.value, name: o.name, ...(o.description === undefined ? {} : { description: o.description }) })) }
+    const catalogOptions = deps.resolvePermissionPresets?.()?.catalog?.().options ?? perm.options ?? []
+    return { preset: perm.currentValue, options: catalogOptions.map((o) => ({ value: o.value, name: o.name, ...(o.description === undefined ? {} : { description: o.description }) })) }
   }
 
   // The /permission-command effect on a given agent: resolve the preset, write the notice-injecting
@@ -628,10 +638,10 @@ export function createBridge(deps: BridgeDeps): Bridge {
         ...(preset.description === undefined ? {} : { description: preset.description }),
       }))
     return {
-      preset: resolveSessionPresetFromEvents(agent.session) ?? presets.defaultId,
+      preset: resolveSessionPresetFromEvents(liveSessionView(agent.session)) ?? presets.defaultId,
       options,
       default: presets.defaultId,
-      locked: sessionHasTurnStart(agent.session),
+      locked: sessionHasTurnStart(agent.session.snapshotEvents()),
     }
   }
 
@@ -654,7 +664,7 @@ export function createBridge(deps: BridgeDeps): Bridge {
     if (agent === undefined) throw new Error(`${ERROR_NAMES.sessionNotFound}: ${sessionId}`)
     const presets = deps.resolveAgentPresets?.()
     if (presets === undefined) throw new Error(`${ERROR_NAMES.agentPresetInvalid}: ${BRIDGE_METHODS.agentPresetSet} requires the agentPresets service`)
-    if (sessionHasTurnStart(agent.session)) throw new Error(`${ERROR_NAMES.agentPresetLocked}: ${sessionId}`)
+    if (sessionHasTurnStart(agent.session.snapshotEvents())) throw new Error(`${ERROR_NAMES.agentPresetLocked}: ${sessionId}`)
 
     let resolved: { readonly id: string }
     try {
@@ -717,7 +727,7 @@ export function createBridge(deps: BridgeDeps): Bridge {
     // this listener ran must never register a never-firing listener.
     if (req.signal?.aborted === true) return Promise.resolve<ApprovalOutcome>('cancelled')
 
-    const approvalId = recoverApprovalId(req.agent.session.events, new Set(pendingApprovals.keys()), req.callId)
+    const approvalId = recoverApprovalId(req.agent.session.snapshotEvents(), new Set(pendingApprovals.keys()), req.callId)
     if (approvalId === undefined) return next()
 
     return new Promise<ApprovalOutcome>((resolve) => {

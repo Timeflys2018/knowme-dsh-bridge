@@ -142,26 +142,49 @@ describe('single-transport composition', () => {
   })
 })
 
-describe('question provider wiring', () => {
-  it('registers the bridge provider when the service is composed', () => {
-    const registered: unknown[] = []
-    mount({ userQuestions: { registerProvider: (p: unknown) => { registered.push(p); return () => undefined } } })
-    expect(registered).toHaveLength(1)
+describe('question answerer wiring (dsh 0.2 waterfall)', () => {
+  it('registers a user-questions/request waterfall listener when the service is composed', () => {
+    // dsh 0.2: ask() runs ctx.waterfall('user-questions/request'); the bridge answers by registering
+    // a listener on that event (the registerProvider push-model was removed).
+    const { ctx } = mount({ userQuestions: {} })
+    expect(ctx.listeners.get('user-questions/request')).toHaveLength(1)
+    expect(ctx.warn).not.toHaveBeenCalled()
   })
 
-  it('a synchronous registerProvider failure degrades questions instead of crashing', async () => {
-    const { input, frames, ctx } = mount({
-      userQuestions: { registerProvider: () => { throw new Error('a user-questions provider is already registered') } },
+  it('the registered listener answers via the bridge questionProvider (park → knowme/question-respond)', async () => {
+    const { input, frames, ctx } = mount({ userQuestions: {}, llm: FAKE_LLM })
+    const listener = ctx.listeners.get('user-questions/request')?.[0]
+    expect(listener).toBeDefined()
+    // Invoking the waterfall listener parks the request (emits questionRequested) and stays pending
+    // until knowme/question-respond resolves it — preserving 0.1 block-until-answered semantics.
+    const agent = { session: { id: 's1' } }
+    const answerPromise = (listener as (req: unknown) => Promise<unknown>)({
+      questions: [{ id: 'q1', prompt: 'ok?', options: [] }],
+      agent,
     })
-    expect(ctx.warn).toHaveBeenCalledTimes(1)
+    await waitForFrames(frames, 1)
+    const note = frames[0] as { method?: string; params?: { requestId?: string } }
+    expect(note.method).toBe('knowme/question-requested')
+    const requestId = note.params?.requestId
+    expect(typeof requestId).toBe('string')
+    send(input, { jsonrpc: '2.0', id: 'q1', method: 'knowme/question-respond', params: { sessionId: 's1', requestId, answers: [{ id: 'q1', selected: ['yes'] }] } })
+    const answer = (await answerPromise) as { answers: unknown[] }
+    expect(answer.answers).toHaveLength(1)
+  })
+
+  it('registers the waterfall listener unconditionally, even before the userQuestions service is active', () => {
+    // dsh 0.2: apply() runs before service fibers reach ACTIVE, so the bridge cannot probe userQuestions
+    // at apply time — it registers the passive waterfall listener regardless, exactly like approval/request.
+    const { ctx } = mount()
+    expect(ctx.listeners.get('user-questions/request')).toHaveLength(1)
+    expect(ctx.warn).not.toHaveBeenCalled()
+  })
+
+  it('knowme/question-respond rejects an unknown requestId with question-not-found', async () => {
+    const { input, frames } = mount()
     send(input, { jsonrpc: '2.0', id: 'q1', method: 'knowme/question-respond', params: { sessionId: 's', requestId: 'r', answers: [] } })
     await waitForFrames(frames, 1)
-    expect((frames[0]?.['error'] as { message: string }).message).toMatch(/user-questions-unavailable/)
-  })
-
-  it('no userQuestions service degrades questions', () => {
-    const { ctx } = mount()
-    expect(ctx.warn).toHaveBeenCalledTimes(1)
+    expect((frames[0]?.['error'] as { message: string }).message).toMatch(/question-not-found/)
   })
 })
 
@@ -174,7 +197,7 @@ describe('approval wiring over the transport', () => {
     expect(handler).toBeDefined()
     const next = vi.fn(async () => 'unavailable' as const)
     const askPromise = (handler as unknown as (...args: never[]) => unknown)(
-      { agent: { id: 'sess-1', session: { id: 'sess-1', events }, ctx: {} }, toolName: 'bash', callId: 'call-1' },
+      { agent: { id: 'sess-1', session: { id: 'sess-1', snapshotEvents: () => events }, ctx: {} }, toolName: 'bash', callId: 'call-1' },
       next,
     ) as Promise<string>
 

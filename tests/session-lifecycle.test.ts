@@ -52,13 +52,16 @@ function makeFakes(over: Partial<{ inspectThrows: boolean; mountThrows: boolean;
     },
     sessions: { get: (id: string) => (live.has(String(id)) ? { id: String(id) } : undefined) },
     persistence: {
-      list: async () => [...persisted.values()].map((p) => p.meta),
-      inspect: async (id: string) => {
-        if (over.inspectThrows === true) throw new Error('SessionPersistenceCorruptionError: torn log')
-        const p = persisted.get(String(id))
-        if (p === undefined) throw new Error('not found')
-        return { meta: p.meta, events: p.events ?? [] }
-      },
+      list: async () => [...persisted.values()].map((p) => ({ header: p.meta })),
+      open: async (id: string, _access: 'read' | 'write') => ({
+        read: async () => {
+          if (over.inspectThrows === true) throw new Error('SessionPersistenceCorruptionError: torn log')
+          const p = persisted.get(String(id))
+          if (p === undefined) throw new Error('not found')
+          return { events: p.events ?? [] }
+        },
+        close: async () => undefined,
+      }),
     },
     ...(over.noAgentPresets === true
       ? {}

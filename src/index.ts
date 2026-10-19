@@ -19,7 +19,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { admitEncodedImages } from '@deepseek-ai/dsh-attachment'
 import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
+import type { SdkPromptContentBlock } from '@deepseek-ai/dsh-sdk-protocol'
 import type { SessionPromptParams } from '@deepseek-ai/dsh-sdk-protocol'
 import { HarnessSdkJsonRpcServer } from '@deepseek-ai/dsh-sdk-jsonrpc-server'
 import type { Readable, Writable } from 'node:stream'
@@ -34,7 +37,7 @@ import {
   type ApprovalServiceLike,
   type CommandsServiceLike,
   type ModelSelectionInstaller,
-  type QuestionProviderLike,
+  type QuestionRequestLike,
   type SessionProjectionsLike,
 } from './bridge.js'
 import { resolvePromptAgent, type AgentOptionsLike, type SessionLifecycleDeps } from './session-lifecycle.js'
@@ -75,6 +78,27 @@ export interface JsonRpcConfig {
 export const Config: Schema<JsonRpcConfig> = Schema.object({
   maxTokensAsSuccess: Schema.boolean().default(false),
 })
+
+// Mirror the stock SDK server's durablePromptContent (dsh 0.2): convert any SdkEncodedImageBlock
+// {type:'image',data,mimeType} into a durable ImageBlock {type:'image',attachment} via the context's
+// attachment store, leaving all other blocks untouched. Encoded images require an attachment store.
+async function durablePromptContent(
+  ctx: BridgePluginContext,
+  blocks: readonly SdkPromptContentBlock[],
+): Promise<ContentBlock[]> {
+  const isEncoded = (b: SdkPromptContentBlock): b is Extract<SdkPromptContentBlock, { data: string }> =>
+    b.type === 'image' && 'data' in b
+  const images = blocks.filter(isEncoded)
+  if (images.length === 0) return blocks as ContentBlock[]
+  const attachments = ctx.get('attachments')
+  if (attachments === undefined) throw new Error('SDK image prompt requires an attachment store')
+  const refs = await admitEncodedImages(
+    attachments as Parameters<typeof admitEncodedImages>[0],
+    images.map((image) => ({ data: image.data, mediaType: image.mimeType })),
+  )
+  let next = 0
+  return blocks.map((b) => (isEncoded(b) ? { type: 'image' as const, attachment: refs[next++]! } : b)) as ContentBlock[]
+}
 
 export function apply(ctx: BridgePluginContext, config: JsonRpcConfig): void {
   const input = config.input ?? process.stdin
@@ -180,7 +204,12 @@ export function apply(ctx: BridgePluginContext, config: JsonRpcConfig): void {
           }
         }
       }
-      const message = createUserMessage({ content: p.contentBlocks ?? [], source: { kind: 'user' } })
+      // dsh 0.2: SdkPromptContentBlock may carry SdkEncodedImageBlock {data,mimeType}; the message
+      // vocabulary's ImageBlock now requires a durable `attachment` ref. Mirror the stock server's
+      // durablePromptContent — admit encoded images into the attachment store, swap to refs — since the
+      // bridge owns session/prompt and would otherwise feed the raw encoded block to createUserMessage.
+      const content = await durablePromptContent(ctx, p.contentBlocks ?? [])
+      const message = createUserMessage({ content, source: { kind: 'user' } })
       agent.followup(message)
       return { messageId: message.id }
     }
@@ -213,20 +242,15 @@ export function apply(ctx: BridgePluginContext, config: JsonRpcConfig): void {
 
   ctx.on('approval/request', bridge.approvalAsk)
 
-  const userQuestions = ctx.get('userQuestions') as { registerProvider(provider: QuestionProviderLike): () => void } | undefined
-  if (userQuestions === undefined) {
-    bridge.disableQuestions('userQuestions service not composed before the bridge')
-    return
-  }
-  try {
-    ctx.effect(() => {
-      const disposeProvider = userQuestions.registerProvider(bridge.questionProvider)
-      return () => { disposeProvider() }
-    }, 'knowme-bridge.questions')
-  } catch (error) {
-    // Best-effort catch for a synchronously-throwing registerProvider (e.g.
-    // DUPLICATE_PROVIDER); if the host defers the throw into fiber startup the
-    // plugin load fails loudly, which the spike exercises for real.
-    bridge.disableQuestions(`provider registration failed: ${error instanceof Error ? error.message : String(error)}`)
-  }
+  // dsh 0.2: the user-questions answerer is a cordis WATERFALL on 'user-questions/request' (ask()
+  // → ctx.waterfall(...), index.ts), NOT the removed registerProvider push-model. Register the
+  // bridge as that waterfall listener UNCONDITIONALLY — exactly like approval/request above. apply()
+  // runs before service fibers reach ACTIVE, so a ctx.get('userQuestions') probe here is always
+  // undefined (see the resolve* comment) and must NOT gate registration. The listener is passive: if
+  // userQuestions is never composed, ask() never dispatches the waterfall, so it simply never fires.
+  // When it does fire it blocks on the renderer's answer via questionProvider.ask (park →
+  // knowme/question-respond → resolveAnswer), preserving the 0.1 block-until-answered semantics with
+  // NO gap. The request carries { questions, agent?, signal? } matching QuestionRequestLike.
+  ctx.on('user-questions/request', ((request: QuestionRequestLike) =>
+    bridge.questionProvider.ask(request)) as never)
 }

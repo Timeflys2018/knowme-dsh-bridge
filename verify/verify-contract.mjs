@@ -29,7 +29,7 @@ const require = createRequire(import.meta.url)
 const here = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
 
-const PINNED = '0.1.1-rc.2'
+const PINNED = '0.2.1-rc.2'
 
 const failures = []
 const check = (ok, label) => {
@@ -72,9 +72,15 @@ check(typeof serverPkg.HarnessSdkJsonRpcServer === 'function', 'HarnessSdkJsonRp
 check(typeof serverPkg.HarnessSdkJsonRpcServer?.prototype.handleRequest === 'function', 'handleRequest method exists')
 const serverLib = libText('@deepseek-ai/dsh-sdk-jsonrpc-server')
 const officialCases = [...serverLib.matchAll(/case ["']([^"']+)["']/g)].map((m) => m[1])
-const expectedCases = ['initialize', 'session/prompt', 'shutdown'].sort().join(', ')
-check(officialCases.sort().join(', ') === expectedCases,
-  `official switch-case set is EXACTLY {${expectedCases}} (found: ${officialCases.join(', ')})`)
+// dsh 0.2 added session/resume, session/wait, session/working-directory/{get,set} to the official
+// server. The bridge's shadowing guard cares that (a) the 3 methods the bridge intercepts/relies on
+// are present, and (b) NO official method is in the knowme/* namespace the bridge owns (that would
+// shadow a bridge route). We no longer pin the set EXACTLY — new official non-knowme methods are fine.
+const coreCases = ['initialize', 'session/prompt', 'shutdown']
+check(coreCases.every((c) => officialCases.includes(c)),
+  `official switch-case set includes the core {${coreCases.join(', ')}} (found: ${officialCases.join(', ')})`)
+check(!officialCases.some((c) => c.startsWith('knowme/')),
+  `no official case is in the knowme/* namespace (no bridge-route shadow); found: ${officialCases.join(', ')}`)
 
 console.log('\n[4] approval surfaces')
 const approval = await import('@deepseek-ai/dsh-user-approval')
@@ -88,8 +94,13 @@ for (const field of ['toolName', 'callId']) {
 
 console.log('\n[5] user-questions surfaces')
 const questions = await import('@deepseek-ai/dsh-user-questions')
-check(typeof questions.UserQuestionService?.prototype.registerProvider === 'function', 'registerProvider exists')
+// dsh 0.2 replaced the registerProvider push-model with a cordis waterfall answerer + out-of-band
+// answer()/askTimed()/attachWait(). The bridge now registers a 'user-questions/request' waterfall
+// listener (see src/index.ts), so pin the 0.2 method surface instead of registerProvider.
 check(typeof questions.UserQuestionService?.prototype.ask === 'function', 'ask exists')
+check(typeof questions.UserQuestionService?.prototype.answer === 'function', 'answer exists (0.2 out-of-band)')
+check(typeof questions.UserQuestionService?.prototype.askTimed === 'function', 'askTimed exists (0.2 foreground wait)')
+check(typeof questions.UserQuestionService?.prototype.attachWait === 'function', 'attachWait exists (0.2 claim)')
 
 console.log('\n[6] llm surface')
 const llmLib = libText('@deepseek-ai/dsh-llm')
@@ -217,16 +228,18 @@ console.log('\n[13] commands service surfaces (knowme/commands.list + execute)')
 
 console.log('\n[14] agent-presets service surfaces (knowme/agentPreset.get + set)')
 {
+  // dsh 0.2 renamed dsh-agent-presets → dsh-agent-preset-registry and dropped the preset.ts
+  // UnknownPresetError/PresetMountError classes + session.ts resolveSessionPreset helper. The bridge's
+  // actual coupling (knowme/agentPreset.*) is the cordis service name 'agentPresets', its list/
+  // resolve/recompose/mount methods, and the 'agent-preset/selected' session event — all still present.
   const profileNm = join(homedir(), '.dsh', 'profiles', 'node_modules', '@deepseek-ai')
-  const apPath = join(profileNm, 'dsh-agent-presets', 'src', 'index.ts')
-  const sessionPath = join(profileNm, 'dsh-agent-presets', 'src', 'session.ts')
-  const presetPath = join(profileNm, 'dsh-agent-presets', 'src', 'preset.ts')
-  if (!existsSync(apPath) || !existsSync(sessionPath) || !existsSync(presetPath)) {
+  const apPath = join(profileNm, 'dsh-agent-preset-registry', 'src', 'index.ts')
+  const sessionPath = join(profileNm, 'dsh-agent-preset-registry', 'src', 'session.ts')
+  if (!existsSync(apPath) || !existsSync(sessionPath)) {
     console.log('  ⚠ skipped — dsh profile not installed (verify:spike pins this against the live runtime)')
   } else {
     const src = readFileSync(apPath, 'utf8')
     const sessionSrc = readFileSync(sessionPath, 'utf8')
-    const presetSrc = readFileSync(presetPath, 'utf8')
     check(/super\(ctx,\s*'agentPresets'\)/.test(src), "service registers as 'agentPresets'")
     for (const method of ['list', 'resolve', 'recompose', 'mount']) {
       check(new RegExp(`\\b${method}\\s*\\(`).test(src), `public ${method}(...) present`)
@@ -240,11 +253,8 @@ console.log('\n[14] agent-presets service surfaces (knowme/agentPreset.get + set
       }
     }
     check(sessionSrc.includes('agent-preset/selected'), "session event 'agent-preset/selected' present")
-    check(/function\s+resolveSessionPreset\b/.test(sessionSrc), 'resolveSessionPreset(session) present')
-    check(/class\s+UnknownPresetError\b/.test(presetSrc), 'UnknownPresetError class present')
-    check(/class\s+PresetMountError\b/.test(presetSrc), 'PresetMountError class present')
-    const ver = require(join(profileNm, 'dsh-agent-presets', 'package.json')).version
-    check(ver === PINNED, `@deepseek-ai/dsh-agent-presets@${ver} === ${PINNED}`)
+    const ver = require(join(profileNm, 'dsh-agent-preset-registry', 'package.json')).version
+    check(ver === PINNED, `@deepseek-ai/dsh-agent-preset-registry@${ver} === ${PINNED}`)
   }
 }
 
