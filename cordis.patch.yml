@@ -17,8 +17,33 @@
     # own web-app bundle, which is the only shipped bundle that composes session-stats.
     - id: session-stats
       name: '@deepseek-ai/dsh-session-stats'
-    # Compose agentPresets so the CLI patches the shipped preset root; mirrors dsh-web-app.
-    - id: agent-presets
-      name: '@deepseek-ai/dsh-agent-presets'
+    # Compose the agentPresets service (dsh 0.2 renamed dsh-agent-presets → dsh-agent-preset-registry;
+    # the service still registers as 'agentPresets'). The registry's `default` MUST name a preset that
+    # is actually DEFINED by a sibling dsh-agent-preset row, or resolving it (every session/prompt)
+    # throws `Unknown agent preset: standard`. dsh-base ships NO preset definitions (only dsh-web-app
+    # does, via its presets/ sub-patch), so this bundle must define its own `standard`. A bare preset
+    # (plugins: []) adds no tools/persona of its own — the base agent tree stands — but gives the
+    # registry a resolvable default so session/prompt + knowme/agentPreset.get work.
+    - id: agent-preset-registry
+      name: '@deepseek-ai/dsh-agent-preset-registry'
       config:
         default: standard
+    # `name` is the user-facing label KnowMe's mode chip / new-session dialog renders verbatim (it reads
+    # options[].name from knowme/agentPreset.get), so it carries the Chinese labels the KnowMe UI expects.
+    - id: preset-standard
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: standard
+        name: 标准模式
+        description: 默认模式（在基础 agent 树之上不加额外插件）。
+        plugins: []
+    # KnowMe's new-session dialog offers 标准模式 (standard) + 极简模式 (minimal) — both must be
+    # DEFINED here or selecting 极简模式 resolves to null (knowme/agentPreset.set/get fails). minimal is
+    # also a bare preset over the base tree; the semantic difference is a KnowMe-side label, not extra rows.
+    - id: preset-minimal
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: minimal
+        name: 极简模式
+        description: 极简模式（在基础 agent 树之上不加额外插件）。
+        plugins: []
